@@ -29,13 +29,13 @@ base_model = transformers.AutoModelForCausalLM.from_pretrained(model_name)
 
 # You can manually quantize a pre-trained model and save it so you don't have
 # to re-quantize it each time:
-quant_model = ft.quantize_base_model(base_model)
+ft.quantize_base_model(base_model)
 
 # Create new finetuned models using either the base or quantized model
 model_1 = ft.new_finetuned(base_model)
 # Can specify granular parameters, if required
 model_2 = ft.new_finetuned(
-    quant_model,
+    base_model,
     target_layers = {'embed_tokens', 'embed_posotions', 'q_proj', 'v_proj'},
     embedding_config=ft.EmbeddingAdapterConfig(r=4, alpha=1),
     linear_config={
