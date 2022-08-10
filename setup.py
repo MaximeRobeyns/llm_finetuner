@@ -24,7 +24,7 @@ setup(
     url="https://github.com/MaximeRobeyns/llm_finetuner",
     license="GPLv3",
     install_requires=get_requirements(),
-    packages=find_packages(exclude=[]),
+    packages=find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: GNU GPLv3 License",

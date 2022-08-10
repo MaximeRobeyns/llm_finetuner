@@ -25,7 +25,7 @@ import finetuna as ft
 import transformers
 
 model_name = 'facebook/opt-125m'
-base_model = transformers.AutoModelForCausalLM(mode_name)
+base_model = transformers.AutoModelForCausalLM.from_pretrained(model_name)
 
 # You can manually quantize a pre-trained model and save it so you don't have
 # to re-quantize it each time:
