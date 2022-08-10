@@ -15,7 +15,7 @@ This repository provides wrappers around LLMs for
 # choices: {cuda92, cuda 100, cuda101, cuda102, cuda110, cuda111, cuda113}
 # replace XXX with the respective number
 pip install bitsandbytes-cudaXXX
-pip install llm_finetuner
+pip install -e .
 ```
 
 ## Example
@@ -27,8 +27,8 @@ import transformers
 model_name = 'facebook/opt-125m'
 base_model = transformers.AutoModelForCausalLM(mode_name)
 
-# convenience to pre-quantize weights so you don't have to do it each time you
-# load a large pretrained model
+# You can manually quantize a pre-trained model and save it so you don't have
+# to re-quantize it each time:
 quant_model = ft.quantize_base_model(base_model)
 
 # Create new finetuned models using either the base or quantized model
