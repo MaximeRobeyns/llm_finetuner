@@ -88,6 +88,9 @@ class DequantizeAndLinear(t.autograd.Function):
         """
 
         weights_deq = dequantize_blockwise(weights_quantized, absmax=absmax, code=code)
+        assert (
+            weights_deq.requires_grad == False
+        ), "Frozen weights have requires_grad = True"
         ctx.save_for_backward(input, weights_quantized, absmax, code)
         ctx._has_bias = bias is not None
         return F.linear(input, weights_deq, bias)
@@ -225,12 +228,24 @@ class QuantizedLearnedPositionalEmbedding(FTModule):
         return cls(weights_int8, *state)
 
 
+def _is_quantized(model: nn.Module) -> bool:
+    try:
+        q = model._is_quantized.item()
+        assert isinstance(q, bool)
+        return q
+    except AttributeError:
+        return False
+
+
 def get_lora_adaptable_modules(
     model: nn.Module,
     target_modules: list[Union[Type[nn.Module], Type[FTModule]]] = [FTModule],
 ) -> set[str]:
     """Returns a set of module names from the provided list of types onto which
     you can add LoRA adapters."""
+    if not _is_quantized(model):
+        print("WARNING: model is not yet quantized")
+
     module_names: set[str] = set()
     for m in model.modules():
         for n, c in m.named_children():
@@ -299,9 +314,9 @@ class LinearAdapter(nn.Module):
         """LoRA adapter for a linear layer"""
         super().__init__()
         out_features, in_features = body_weight.shape
-        self.lora_A = nn.Parameter(t.zeros((r, in_features)))
+        self.lora_A = nn.Parameter(t.zeros((r, in_features))).requires_grad_(True)
         nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-        self.lora_B = nn.Parameter(t.zeros((out_features, r)))
+        self.lora_B = nn.Parameter(t.zeros((out_features, r))).requires_grad_(True)
 
         nn.init.zeros_(self.lora_B)
         self.scaling = alpha / r
@@ -326,9 +341,9 @@ class EmbeddingAdapter(nn.Module):
     ):
         """LoRA adapter for an embedding layer"""
         super().__init__()
-        self.lora_A = nn.Parameter(t.zeros((r, num_embeddings)))
+        self.lora_A = nn.Parameter(t.zeros((r, num_embeddings))).requires_grad_(True)
         nn.init.zeros_(self.lora_A)
-        self.lora_B = nn.Parameter(t.zeros((embedding_dim, r)))
+        self.lora_B = nn.Parameter(t.zeros((embedding_dim, r))).requires_grad_(True)
         nn.init.normal_(self.lora_B)
         self.scaling = alpha / r
 
@@ -353,6 +368,9 @@ def quantize_base_model(model: nn.Module):
                 )
             elif type(child) is nn.Embedding:
                 setattr(module, name, QuantizedEmbedding.from_embedding(child))
+            else:
+                # remove gradients
+                child.requires_grad_(False)
 
     model.register_buffer("_is_quantized", t.tensor([True]))
 
@@ -374,12 +392,10 @@ def new_finetuned(
     # fmt: on
 ) -> nn.Module:
     """
-    shallow copies and quantizes if necessary
+    Shallow copies and quantizes if necessary
     """
 
-    try:
-        assert model._is_quantized
-    except AttributeError:
+    if not _is_quantized(model):
         quantize_base_model(model)
 
     new_model = copy_mod(model)
@@ -389,6 +405,7 @@ def new_finetuned(
 
     for n, module in new_model.named_modules():
         root_name = n.split(".")[-1]
+
         if root_name in target_layers:
 
             # Linear adapter --------------------------------------------------
@@ -401,13 +418,18 @@ def new_finetuned(
                         )
                 else:
                     config = linear_config
+                # the weight is merely used to get the dimensions
                 weight = module.get_buffer("quant_weight")
-                module.lora_adapter = LinearAdapter(
-                    body_weight=weight,
-                    r=config.r,
-                    alpha=config.alpha,
-                    dropout=config.dropout,
-                    device=weight.device,
+                setattr(
+                    module,
+                    "lora_adapter",
+                    LinearAdapter(
+                        body_weight=weight,
+                        r=config.r,
+                        alpha=config.alpha,
+                        dropout=config.dropout,
+                        device=weight.device,
+                    ),
                 )
 
             # Embedding adapter ------------------------------------------------
@@ -435,4 +457,4 @@ def new_finetuned(
             else:
                 print(f"WARNING: cannot adapt {n} of type {module._get_name()}")
 
-        return new_model
+    return new_model
