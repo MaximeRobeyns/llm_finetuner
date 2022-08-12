@@ -237,10 +237,14 @@ def _is_quantized(model: nn.Module) -> bool:
         return False
 
 
+#def get_lora_adaptable_modules(
+#    model: nn.Module,
+#    target_modules: list[Union[Type[nn.Module], Type[FTModule]]] = [FTModule],
+#) -> set[str]:
 def get_lora_adaptable_modules(
     model: nn.Module,
-    target_modules: list[Union[Type[nn.Module], Type[FTModule]]] = [FTModule],
-) -> set[str]:
+    target_modules: list = [FTModule],
+) -> set:
     """Returns a set of module names from the provided list of types onto which
     you can add LoRA adapters."""
     if not _is_quantized(model):
@@ -383,12 +387,20 @@ def copy_mod(mod: nn.Module) -> nn.Module:
     return tmp
 
 
+#def new_finetuned(
+#    model: nn.Module,
+#    target_layers: Optional[set[str]] = None,
+#    # fmt: off
+#        embedding_config: Union[dict[str, EmbeddingAdapterConfig], EmbeddingAdapterConfig] = EmbeddingAdapterConfig(),
+#        linear_config: Union[dict[str, LinearAdapterConfig], LinearAdapterConfig] = LinearAdapterConfig(),
+#    # fmt: on
+#) -> nn.Module:
 def new_finetuned(
     model: nn.Module,
-    target_layers: Optional[set[str]] = None,
+    target_layers: Optional = None,
     # fmt: off
-        embedding_config: Union[dict[str, EmbeddingAdapterConfig], EmbeddingAdapterConfig] = EmbeddingAdapterConfig(),
-        linear_config: Union[dict[str, LinearAdapterConfig], LinearAdapterConfig] = LinearAdapterConfig(),
+        embedding_config: Union = EmbeddingAdapterConfig(),
+        linear_config: Union = LinearAdapterConfig(),
     # fmt: on
 ) -> nn.Module:
     """
