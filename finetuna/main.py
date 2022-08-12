@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from abc import abstractmethod
-from typing import Type, Optional, Union
+from typing import Type, Optional, Union, Dict, Set, List  # for Python 3.8 compat
 from dataclasses import dataclass
 from torch.cuda.amp import custom_fwd, custom_bwd
 from bitsandbytes.functional import quantize_blockwise, dequantize_blockwise
@@ -23,6 +23,7 @@ class LinearAdapterConfig:
     r: int = 4
     alpha: int = 1
     dropout: float = 0.0
+    bias: bool = True
 
 
 class FTModule(nn.Module):
@@ -133,6 +134,8 @@ class QuantizedLinear(FTModule):
         assert isinstance(bias, nn.Parameter) or bias is None
         self.out_features, self.in_features = weight.shape
         self.bias = bias
+        if self.bias is not None:
+            self.bias.requires_grad = False
 
     def _forward(self, x: t.Tensor, **kwargs) -> t.Tensor:
         return DequantizeAndLinear.apply(
@@ -148,7 +151,7 @@ class QuantizedLinear(FTModule):
         """Converts a PyTorch nn.Linear module to a quantized 8-bit linear
         layer with frozen body parameters"""
         weights_int8, state = quantize_blockwise_lowmem(linear.weight)
-        return cls(weights_int8, *state, linear.bias)
+        return cls(weights_int8, *state, bias=linear.bias)
 
     def __repr__(self):
         return f"{self._get_name()} ({self.in_features}, {self.out_features})"
@@ -237,14 +240,10 @@ def _is_quantized(model: nn.Module) -> bool:
         return False
 
 
-#def get_lora_adaptable_modules(
-#    model: nn.Module,
-#    target_modules: list[Union[Type[nn.Module], Type[FTModule]]] = [FTModule],
-#) -> set[str]:
 def get_lora_adaptable_modules(
     model: nn.Module,
-    target_modules: list = [FTModule],
-) -> set:
+    target_modules: List[Union[Type[nn.Module], Type[FTModule]]] = [FTModule],
+) -> Set[str]:
     """Returns a set of module names from the provided list of types onto which
     you can add LoRA adapters."""
     if not _is_quantized(model):
@@ -313,6 +312,7 @@ class LinearAdapter(nn.Module):
         r: int = 4,
         alpha: int = 1,
         dropout: float = 0.0,
+        bias: bool = True,
         device: t.device = None,
     ):
         """LoRA adapter for a linear layer"""
@@ -321,8 +321,10 @@ class LinearAdapter(nn.Module):
         self.lora_A = nn.Parameter(t.zeros((r, in_features))).requires_grad_(True)
         nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
         self.lora_B = nn.Parameter(t.zeros((out_features, r))).requires_grad_(True)
+        self.lora_bias = nn.Parameter(t.zeros((out_features,))).requires_grad_(True)
 
         nn.init.zeros_(self.lora_B)
+        nn.init.zeros_(self.lora_bias)
         self.scaling = alpha / r
         self.dropout = nn.Dropout(p=dropout)
 
@@ -331,7 +333,9 @@ class LinearAdapter(nn.Module):
         self.to(device=device)
 
     def forward(self, x: t.Tensor) -> t.Tensor:
-        return (self.dropout(x) @ self.lora_A.T @ self.lora_B.T) * self.scaling
+        return (
+            self.dropout(x) @ self.lora_A.T @ self.lora_B.T + self.lora_bias
+        ) * self.scaling
 
 
 class EmbeddingAdapter(nn.Module):
@@ -373,7 +377,7 @@ def quantize_base_model(model: nn.Module):
             elif type(child) is nn.Embedding:
                 setattr(module, name, QuantizedEmbedding.from_embedding(child))
             else:
-                # remove gradients
+                # just remove gradients for any other module
                 child.requires_grad_(False)
 
     model.register_buffer("_is_quantized", t.tensor([True]))
@@ -387,20 +391,12 @@ def copy_mod(mod: nn.Module) -> nn.Module:
     return tmp
 
 
-#def new_finetuned(
-#    model: nn.Module,
-#    target_layers: Optional[set[str]] = None,
-#    # fmt: off
-#        embedding_config: Union[dict[str, EmbeddingAdapterConfig], EmbeddingAdapterConfig] = EmbeddingAdapterConfig(),
-#        linear_config: Union[dict[str, LinearAdapterConfig], LinearAdapterConfig] = LinearAdapterConfig(),
-#    # fmt: on
-#) -> nn.Module:
 def new_finetuned(
     model: nn.Module,
-    target_layers: Optional = None,
+    target_layers: Optional[Set[str]] = None,
     # fmt: off
-        embedding_config: Union = EmbeddingAdapterConfig(),
-        linear_config: Union = LinearAdapterConfig(),
+    embedding_config: Union[Dict[str, EmbeddingAdapterConfig], EmbeddingAdapterConfig] = EmbeddingAdapterConfig(),
+    linear_config: Union[Dict[str, LinearAdapterConfig], LinearAdapterConfig] = LinearAdapterConfig(),
     # fmt: on
 ) -> nn.Module:
     """
@@ -436,10 +432,12 @@ def new_finetuned(
                     module,
                     "lora_adapter",
                     LinearAdapter(
+                        # TODO: change to in_features, out_features
                         body_weight=weight,
                         r=config.r,
                         alpha=config.alpha,
                         dropout=config.dropout,
+                        bias=config.bias,
                         device=weight.device,
                     ),
                 )
@@ -456,14 +454,17 @@ def new_finetuned(
                         )
                 else:
                     config = embedding_config
-                # print(f"adding embedding adapter to {n}")
                 weight = module.get_buffer("quant_weight")
-                module.lora_adapter = EmbeddingAdapter(
-                    num_embeddings=module.num_embeddings,
-                    embedding_dim=module.embedding_dim,
-                    r=config.r,
-                    alpha=config.alpha,
-                    device=weight.device,
+                setattr(
+                    module,
+                    "lora_adapter",
+                    EmbeddingAdapter(
+                        num_embeddings=module.num_embeddings,
+                        embedding_dim=module.embedding_dim,
+                        r=config.r,
+                        alpha=config.alpha,
+                        device=weight.device,
+                    ),
                 )
 
             else:
