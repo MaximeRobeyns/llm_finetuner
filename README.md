@@ -12,11 +12,14 @@ This repository provides wrappers around LLMs for
 ## Install
 
 ```bash
-# choices: {cuda92, cuda 100, cuda101, cuda102, cuda110, cuda111, cuda113}
-# replace XXX with the respective number
-pip install bitsandbytes-cudaXXX
 pip install -e .
 ```
+
+Note: if you do not have pytorch installed already, this will install the CPU
+version. To install a GPU version, please locate your CUDA version (`{cuda101,
+cuda102, cuda110, cuda111, cuda113}`), and provide the appropriate
+`--extra-index-url` to the `pip install` command. E.g. CUDA 11.3, run `pip
+install -e . --extra-index-url https://download.pytorch.org/whl/cu113`
 
 ## Example
 
