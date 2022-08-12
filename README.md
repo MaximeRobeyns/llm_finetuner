@@ -39,16 +39,18 @@ model_2 = ft.new_finetuned(
     target_layers = {'embed_tokens', 'embed_posotions', 'q_proj', 'v_proj'},
     embedding_config=ft.EmbeddingAdapterConfig(r=4, alpha=1),
     linear_config={
-        'q_proj': ft.LinearAdapterConfig(r=8, alpha=1, dropout=0.0),
-        'v_proj': ft.LinearAdapterConfig(r=4, alpha=1, dropout=0.1),
+        'q_proj': ft.LinearAdapterConfig(r=8, alpha=1, dropout=0.0, bias=False),
+        'v_proj': ft.LinearAdapterConfig(r=4, alpha=1, dropout=0.1, bias=True),
     },
 )
 
+
 # Fine-tune as usual
-opt.zero_grad()
-loss = mse_loss(model_1(prompt) - target)  # pseudo-notation
-model_1.backward(loss)
-opt.step()
+with t.cuda.amp.autocast():
+    opt.zero_grad()
+    loss = mse_loss(model_1(prompt) - target)  # pseudo-notation
+    model_1.backward(loss)
+    opt.step()
 
 
 # NOTE: saving not yet implemented:
