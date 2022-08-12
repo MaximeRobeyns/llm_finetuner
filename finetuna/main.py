@@ -92,7 +92,8 @@ class DequantizeAndLinear(t.autograd.Function):
         assert (
             weights_deq.requires_grad == False
         ), "Frozen weights have requires_grad = True"
-        ctx.save_for_backward(input, weights_quantized, absmax, code)
+        # ctx.save_for_backward(input, weights_quantized, absmax, code)
+        ctx.save_for_backward(weights_quantized, absmax, code)
         ctx._has_bias = bias is not None
         return F.linear(input, weights_deq, bias)
 
@@ -114,7 +115,8 @@ class DequantizeAndLinear(t.autograd.Function):
             and not ctx.needs_input_grad[3]
         )
         # TODO: can we get rid of input?
-        input, weights_quantized, absmax, code = ctx.saved_tensors
+        # input, weights_quantized, absmax, code = ctx.saved_tensors
+        weights_quantized, absmax, code = ctx.saved_tensors
         # grad output has shape: [*batch, out_features]
         weights_deq = dequantize_blockwise(weights_quantized, absmax=absmax, code=code)
         grad_input = grad_output @ weights_deq
