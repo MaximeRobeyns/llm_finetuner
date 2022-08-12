@@ -9,7 +9,7 @@ from typing import Type, Optional, Union, Dict, Set, List  # for Python 3.8 comp
 from dataclasses import dataclass
 from torch.cuda.amp import custom_fwd, custom_bwd
 from bitsandbytes.functional import quantize_blockwise, dequantize_blockwise
-from bitsandbytes.nn.modules import StableEmbedding
+from bitsandbytes.nn.modules import Linear8bitLt, StableEmbedding, Int8Params
 
 
 @dataclass
@@ -27,7 +27,12 @@ class LinearAdapterConfig:
 
 
 class FTModule(nn.Module):
-    def __init__(self, weight: t.ByteTensor, absmax: t.FloatTensor, code: t.IntTensor):
+    def __init__(
+        self,
+        weight: t.ByteTensor,
+        absmax: t.FloatTensor,
+        code: t.IntTensor,
+    ):
         """A frozen, 8-bit quantized module which accomodates LoRA adapters.
 
         Args:
@@ -60,70 +65,6 @@ class FTModule(nn.Module):
         return output
 
 
-class DequantizeAndLinear(t.autograd.Function):
-    """
-    Wrapper around `nn.Linear` to dequantize the weight matrices as required.
-    """
-
-    @staticmethod
-    @custom_fwd
-    def forward(
-        ctx,
-        input: t.Tensor,
-        weights_quantized: t.ByteTensor,
-        absmax: t.FloatTensor,
-        code: t.FloatTensor,
-        bias: t.FloatTensor,
-    ) -> t.Tensor:
-        """Block-dequantize the 8-bit weights to use them in the forward pass.
-
-        Args:
-            input: the tensor to pass through the underlying nn.Linear function
-            weights_quantized: the stored 8-bit weight tensor to dequantize
-            absmax: the block's absolute maximum for dequantization
-            code: the dynamic quantization map (maps uint8 indices to float32
-                values, see 1511.04561)
-            bias: bias term (not quantized)
-        Returns:
-            t.Tensor: the input passed through the linear layer.
-        """
-
-        weights_deq = dequantize_blockwise(weights_quantized, absmax=absmax, code=code)
-        assert (
-            weights_deq.requires_grad == False
-        ), "Frozen weights have requires_grad = True"
-        # ctx.save_for_backward(input, weights_quantized, absmax, code)
-        ctx.save_for_backward(weights_quantized, absmax, code)
-        ctx._has_bias = bias is not None
-        return F.linear(input, weights_deq, bias)
-
-    @staticmethod
-    @custom_bwd
-    def backward(ctx, grad_output: t.Tensor):
-        """Block-dequantize the 8-bit weights to update the gradient in the
-        backward pass.
-
-        Recall that the weights are frozen (i.e. a constant in dL/dW), so we
-        merely multiply the current gradient value by the dequantized weights.
-
-        Args:
-            grad_output: the current gradient value in the backward pass
-        """
-        assert (
-            not ctx.needs_input_grad[1]
-            and not ctx.needs_input_grad[2]
-            and not ctx.needs_input_grad[3]
-        )
-        # TODO: can we get rid of input?
-        # input, weights_quantized, absmax, code = ctx.saved_tensors
-        weights_quantized, absmax, code = ctx.saved_tensors
-        # grad output has shape: [*batch, out_features]
-        weights_deq = dequantize_blockwise(weights_quantized, absmax=absmax, code=code)
-        grad_input = grad_output @ weights_deq
-        grad_bias = grad_output.flatten(0, -2).sum(dim=0) if ctx._has_bias else None
-        return grad_input, None, None, None, grad_bias
-
-
 class QuantizedLinear(FTModule):
     def __init__(
         self,
@@ -140,13 +81,11 @@ class QuantizedLinear(FTModule):
             self.bias.requires_grad = False
 
     def _forward(self, x: t.Tensor, **kwargs) -> t.Tensor:
-        return DequantizeAndLinear.apply(
-            x,
-            self.quant_weight,
-            self.quant_absmax,
-            self.quant_code,
-            self.bias,
+        # with t.no_grad():
+        weight_deq = dequantize_blockwise(
+            self.quant_weight, absmax=self.quant_absmax, code=self.quant_code
         )
+        return F.linear(x, weight_deq, self.bias)
 
     @classmethod
     def from_linear(cls, linear: nn.Linear) -> "QuantizedLinear":
@@ -430,6 +369,7 @@ def new_finetuned(
                     config = linear_config
                 # the weight is merely used to get the dimensions
                 weight = module.get_buffer("quant_weight")
+                # weight = module.module.weight
                 setattr(
                     module,
                     "lora_adapter",
