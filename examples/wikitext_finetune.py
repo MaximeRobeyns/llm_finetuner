@@ -21,6 +21,10 @@ model_1 = ft.new_finetuned(
     model,
     target_layers={"embed_tokens", "embed_posotions", "q_proj", "v_proj"},
 ).to(device)
+model_2 = ft.new_finetuned(
+    model,
+    target_layers={"embed_tokens", "embed_posotions", "q_proj", "v_proj"},
+).to(device)
 model_1.gradient_checkpointing_enable()
 
 dset = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
