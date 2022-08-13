@@ -302,26 +302,24 @@ class EmbeddingAdapter(nn.Module):
         return (F.embedding(x, self.lora_A.T, **kwargs) @ self.lora_B.T) * self.scaling
 
 
-def quantize_base_model(model: nn.Module):
-    """Modifies the provided module in place to quantize it. (No shallow copying etc.)"""
-    for module in list(model.modules()):
-        for name, child in module.named_children():
-            if type(child) is nn.Linear:
-                setattr(module, name, QuantizedLinear.from_linear(child))
-            elif "LearnedPositionalEmbedding" in str(type(child)):
-                # For OPT, the learned positional embedding works differently to
-                # the vanilla Embedding, so we need a special class for this:
-                assert isinstance(child, nn.Embedding)
-                setattr(
-                    module, name, QuantizedLearnedPositionalEmbedding.from_base(child)
-                )
-            elif type(child) is nn.Embedding:
-                setattr(module, name, QuantizedEmbedding.from_embedding(child))
-            else:
-                # just remove gradients for any other module
-                child.requires_grad_(False)
+def quantize_base_model(mod: nn.Module) -> nn.Module:
+    for name, child in mod._modules.items():
+        # if False:
+        #    pass
+        if type(child) is nn.Linear:
+            mod._modules[name] = QuantizedLinear.from_linear(child)
+        # elif "LearnedPositionalEmbedding" in str(type(child)):
+        #    # For OPT, the learned positional embedding works differently to
+        #    # the vanilla Embedding, so we need a special class for this:
+        #    assert isinstance(child, nn.Embedding)
+        #    tmp._modules[name] = QuantizedLearnedPositionalEmbedding.from_base(child)
+        # elif type(child) is nn.Embedding:
+        #    tmp._modules[name] = QuantizedEmbedding.from_embedding(child)
+        else:
+            mod._modules[name] = quantize_base_model(child)
 
-    model.register_buffer("_is_quantized", t.tensor([True]))
+    mod.register_buffer("_is_quantized", t.tensor([True]))
+    return mod
 
 
 def copy_mod(mod: nn.Module) -> nn.Module:
