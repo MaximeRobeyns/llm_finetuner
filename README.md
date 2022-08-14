@@ -19,7 +19,7 @@ Then, install PyTorch with `cudatookkit` through conda (see https://pytorch.org 
 ```bash
 conda install pytorch torchvision torchaudio cudatoolkit=11.3 -c pytorch
 ```
-Then clone this repo, navigate to the root and use:
+Then clone this repo, navigate to the repository root and use:
 ```bash
 pip install -e .
 ```
