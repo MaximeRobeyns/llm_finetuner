@@ -11,11 +11,11 @@ This repository provides wrappers around LLMs for
 
 ## Install
 
-First, you need PyTorch installed with `cudatoolkit`.  You don't seem to get `cudatoolkit` when you install PyTorch using `pip`.  You may be able to install `cudatoolkit` separately, but we haven't tested that.  Instead, our recommendation is to install PyTorch through conda.  If you already have PyTorch installed in pip:
+First, you need PyTorch installed with `cudatoolkit` (see [link](https://docs.google.com/document/d/1JxSo4lQgMDBdnd19VBEoaG-mMfQupQ3XvOrgmRAVtpU/edit#)).  You don't seem to get `cudatoolkit` when you install PyTorch using `pip`.  You may be able to install `cudatoolkit` separately, but we haven't tested that.  Our tested proceedure is to remove previous installs of PyTorch.  e.g. if PyTorch is currently installed through pip: 
 ```bash
 pip uninstall torch
 ```
-Then, install PyTorch through conda (see https://pytorch.org for the latest install command, but CUDA 11.3 seems to be working with bitsandbytes)
+Then, install PyTorch with `cudatookkit` through conda (see https://pytorch.org for the latest install command, but CUDA 11.3 seems to be working with `bitsandbytes`)
 ```bash
 conda install pytorch torchvision torchaudio cudatoolkit=11.3 -c pytorch
 ```
