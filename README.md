@@ -11,15 +11,22 @@ This repository provides wrappers around LLMs for
 
 ## Install
 
+First, you need PyTorch installed with `cudatoolkit`.  You don't seem to get `cudatoolkit` when you install PyTorch using `pip`.  You may be able to install `cudatoolkit` separately, but we haven't tested that.  Instead, our recommendation is to install PyTorch through conda.  If you already have PyTorch installed in pip:
+```bash
+pip uninstall torch
+```
+Then, install PyTorch through conda (see https://pytorch.org for the latest install command, but CUDA 11.3 seems to be working with bitsandbytes)
+```bash
+conda install pytorch torchvision torchaudio cudatoolkit=11.3 -c pytorch
+```
+Then clone this repo, navigate to the root and use:
 ```bash
 pip install -e .
 ```
 
-Note: if you do not have pytorch installed already, this will install the CPU
-version. To install a GPU version, please locate your CUDA version (`{cuda101,
-cuda102, cuda110, cuda111, cuda113}`), and provide the appropriate
-`--extra-index-url` to the `pip install` command. E.g. CUDA 11.3, run `pip
-install -e . --extra-index-url https://download.pytorch.org/whl/cu113`
+## Notes on bitsandbytes
+`bitsandbytes` was forked in a confusing way.
+The actual repo is https://github.com/TimDettmers/bitsandbytes, and this version installs with `pip install bitsandbytes`.  However, if you search on Google, you get the older repo https://github.com/facebookresearch/bitsandbytes and this version installs with `pip install bitsandbytes-cudaXXX`.  We need the newer version, installed with `pip install bitsandbytes`.
 
 ## Example
 
