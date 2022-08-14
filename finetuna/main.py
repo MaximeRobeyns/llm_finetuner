@@ -188,7 +188,10 @@ def _is_quantized(model: nn.Module) -> bool:
 
 def get_lora_adaptable_modules(
     model: nn.Module,
-    target_modules: List[Union[Type[nn.Module], Type[FTModule]]] = [FTModule],
+    target_modules: List[Union[Type[nn.Module], Type[FTModule]]] = [
+        FTModule,
+        nn.Linear,
+    ],
 ) -> Set[str]:
     """Returns a set of module names from the provided list of types onto which
     you can add LoRA adapters."""
@@ -310,13 +313,13 @@ class EmbeddingAdapter(nn.Module):
 
 
 def quantize_base_model(
-    model: nn.Module, threshold=6.0, modules_not_to_convert: List[str] = ["lm_head"]
+    model: nn.Module, modules_not_to_quantize: List[str] = ["lm_head"]
 ) -> nn.Module:
     for name, mod in model.named_children():
         if len(list(mod.children())) > 0:
-            quantize_base_model(mod, threshold, modules_not_to_convert)
+            quantize_base_model(mod, modules_not_to_quantize)
 
-        if name not in modules_not_to_convert:
+        if name not in modules_not_to_quantize:
             if isinstance(mod, nn.Linear):
                 model._modules[name] = QuantizedLinear.from_linear(mod)
             elif "LearnedPositionalEmbedding" in str(type(mod)):
@@ -351,23 +354,36 @@ def new_finetuned(
     embedding_config: Union[Dict[str, EmbeddingAdapterConfig], EmbeddingAdapterConfig] = EmbeddingAdapterConfig(),
     linear_config: Union[Dict[str, LinearAdapterConfig], LinearAdapterConfig] = LinearAdapterConfig(),
     # fmt: on
+    modules_not_to_quantize: List[str] = ["lm_head"],
 ) -> nn.Module:
     """
     Shallow copies and quantizes if necessary
     """
 
     if not _is_quantized(model):
-        quantize_base_model(model)
+        quantize_base_model(model, modules_not_to_quantize)
 
     new_model = copy_mod(model)
 
     if target_layers is None:
         target_layers = get_lora_adaptable_modules(new_model)
 
+    learned_unquantized_layers = [
+        m for m in modules_not_to_quantize if m in target_layers
+    ]
+
+    print(f"target layers are: {target_layers}")
+
     for n, module in new_model.named_modules():
         root_name = n.split(".")[-1]
 
+        if root_name in learned_unquantized_layers:
+            print(f"doing learned unquantized {root_name}")
+            model._modules[n] = copy.deepcopy(module)
+            continue
+
         if root_name in target_layers:
+            print(f"doing quantized: {root_name}")
 
             # Linear adapter --------------------------------------------------
             if isinstance(module, QuantizedLinear):
