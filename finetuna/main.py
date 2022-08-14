@@ -112,14 +112,19 @@ class QuantizedEmbedding(FTModule):
         self.num_embeddings, self.embedding_dim = weight.shape
 
     def _forward(self, x: t.Tensor, **kwargs):
-        with t.no_grad():
-            # Note: both the quantized weights and input indices are not differentiable
-            weight_deq = dequantize_blockwise(
-                self.quant_weight, absmax=self.quant_absmax, code=self.quant_code
-            )
-            # TODO: use stable embedding
-            # https://bitsandbytes.readthedocs.io/en/latest/tree/bitsandbytes.nn.html#module-bitsandbytes.nn.modules
-            return F.embedding(x, weight_deq, **kwargs)
+        # with t.no_grad():
+        # Note: both the quantized weights and input indices are not differentiable
+        weight_deq = dequantize_blockwise(
+            self.quant_weight, absmax=self.quant_absmax, code=self.quant_code
+        )
+        # TODO: use stable embedding
+        # https://bitsandbytes.readthedocs.io/en/latest/tree/bitsandbytes.nn.html#module-bitsandbytes.nn.modules
+        #
+        # NOTE: for models with gradient_checkpointing, since x is IntTensor
+        # and weight_deq is frozen (requires_grad = False), the resulting
+        # output will have requires_grad = False which causes problems with
+        # checkpointing.
+        return F.embedding(x, weight_deq, **kwargs).requires_grad_(True)
 
     @classmethod
     def from_embedding(cls, embedding: nn.Embedding) -> "QuantizedEmbedding":
@@ -152,14 +157,14 @@ class QuantizedLearnedPositionalEmbedding(FTModule):
         positions = positions[:, past_key_values_length:]
         positions = positions + self.offset
 
-        with t.no_grad():
-            # both the weights and input indices are not differentiable:
-            weight_deq = dequantize_blockwise(
-                self.quant_weight, absmax=self.quant_absmax, code=self.quant_code
-            )
-            output = F.embedding(positions, weight_deq)
+        # both the weights and input indices are not differentiable:
+        weight_deq = dequantize_blockwise(
+            self.quant_weight, absmax=self.quant_absmax, code=self.quant_code
+        )
+        output = F.embedding(positions, weight_deq)
 
         if self.lora_adapter:
+            # TODO: come back here
             return self.lora_adapter(positions) + output
 
         return output
@@ -259,13 +264,16 @@ class LinearAdapter(nn.Module):
         """LoRA adapter for a linear layer"""
         super().__init__()
         out_features, in_features = body_weight.shape
-        self.lora_A = nn.Parameter(t.zeros((r, in_features))).requires_grad_(True)
-        nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-        self.lora_B = nn.Parameter(t.zeros((out_features, r))).requires_grad_(True)
-        self.lora_bias = nn.Parameter(t.zeros((out_features,))).requires_grad_(True)
 
-        nn.init.zeros_(self.lora_B)
-        nn.init.zeros_(self.lora_bias)
+        self.A = nn.Parameter(t.zeros((r, in_features))).requires_grad_(True)
+        nn.init.kaiming_uniform_(self.A, a=math.sqrt(5))
+
+        self.B = nn.Parameter(t.zeros((out_features, r))).requires_grad_(True)
+        nn.init.zeros_(self.B)
+
+        self.bias = nn.Parameter(t.zeros((out_features,))).requires_grad_(True)
+        nn.init.zeros_(self.bias)
+
         self.scaling = alpha / r
         self.dropout = nn.Dropout(p=dropout)
 
@@ -274,9 +282,7 @@ class LinearAdapter(nn.Module):
         self.to(device=device)
 
     def forward(self, x: t.Tensor) -> t.Tensor:
-        return (
-            self.dropout(x) @ self.lora_A.T @ self.lora_B.T + self.lora_bias
-        ) * self.scaling
+        return (self.dropout(x) @ self.A.T @ self.B.T + self.bias) * self.scaling
 
 
 class EmbeddingAdapter(nn.Module):
@@ -290,36 +296,44 @@ class EmbeddingAdapter(nn.Module):
     ):
         """LoRA adapter for an embedding layer"""
         super().__init__()
-        self.lora_A = nn.Parameter(t.zeros((r, num_embeddings))).requires_grad_(True)
-        nn.init.zeros_(self.lora_A)
-        self.lora_B = nn.Parameter(t.zeros((embedding_dim, r))).requires_grad_(True)
-        nn.init.normal_(self.lora_B)
-        self.scaling = alpha / r
+        self.A = nn.Parameter(t.zeros((r, num_embeddings))).requires_grad_(True)
+        nn.init.zeros_(self.A)
 
+        self.B = nn.Parameter(t.zeros((embedding_dim, r))).requires_grad_(True)
+        nn.init.normal_(self.B)
+
+        self.scaling = alpha / r
         self.to(device=device)
 
     def forward(self, x: t.Tensor, *args, **kwargs) -> t.Tensor:
-        return (F.embedding(x, self.lora_A.T, **kwargs) @ self.lora_B.T) * self.scaling
+        return (F.embedding(x, self.A.T, **kwargs) @ self.B.T) * self.scaling
 
 
-def quantize_base_model(mod: nn.Module) -> nn.Module:
-    for name, child in mod._modules.items():
-        # if False:
-        #    pass
-        if type(child) is nn.Linear:
-            mod._modules[name] = QuantizedLinear.from_linear(child)
-        # elif "LearnedPositionalEmbedding" in str(type(child)):
-        #    # For OPT, the learned positional embedding works differently to
-        #    # the vanilla Embedding, so we need a special class for this:
-        #    assert isinstance(child, nn.Embedding)
-        #    tmp._modules[name] = QuantizedLearnedPositionalEmbedding.from_base(child)
-        # elif type(child) is nn.Embedding:
-        #    tmp._modules[name] = QuantizedEmbedding.from_embedding(child)
-        else:
-            mod._modules[name] = quantize_base_model(child)
+def quantize_base_model(
+    model: nn.Module, threshold=6.0, modules_not_to_convert: List[str] = ["lm_head"]
+) -> nn.Module:
+    for name, mod in model.named_children():
+        if len(list(mod.children())) > 0:
+            quantize_base_model(mod, threshold, modules_not_to_convert)
 
-    mod.register_buffer("_is_quantized", t.tensor([True]))
-    return mod
+        if name not in modules_not_to_convert:
+            if isinstance(mod, nn.Linear):
+                model._modules[name] = QuantizedLinear.from_linear(mod)
+            elif "LearnedPositionalEmbedding" in str(type(mod)):
+                # For OPT, the learned positional embedding works differently to
+                # the vanilla Embedding, so we need a special class for this:
+                assert isinstance(mod, nn.Embedding)
+                model._modules[name] = QuantizedLearnedPositionalEmbedding.from_base(
+                    mod
+                )
+            elif isinstance(mod, nn.Embedding):
+                model._modules[name] = QuantizedEmbedding.from_embedding(mod)
+            else:
+                model._modules[name].requires_grad_(False)
+
+    model.register_buffer("_is_quantized", t.tensor([True]))
+
+    return model
 
 
 def copy_mod(mod: nn.Module) -> nn.Module:
