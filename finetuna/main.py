@@ -35,6 +35,13 @@ def _is_quantized(model: nn.Module) -> bool:
         return False
 
 
+def _get_ft_mod_device(mod: FTModule) -> t.device:
+    if isinstance(mod, QuantizedModule):
+        return next(mod.buffers()).device
+    else:
+        return next(mod.parameters()).device
+
+
 def get_model_mem_consumption(model) -> int:
     """Returns an estimate of the model's memory consumption by looking at its
     parameters."""
@@ -76,7 +83,7 @@ def quantize_blockwise_lowmem(
 
     matrix_i8 = t.cat(chunks).reshape_as(matrix)
     absmax = t.cat(absmaxes)
-    return matrix_i8, absmax, code
+    return matrix_i8, (absmax, code)
 
 
 def copy_mod(mod: nn.Module) -> nn.Module:
@@ -131,7 +138,7 @@ class LinearAdapterConfig:
 class FTModule(nn.Module):
     def __init__(self):
         """A module which optionally accomodates LoRA adapters."""
-        super().__init__()
+        super(FTModule, self).__init__()
         self.lora_adapter: Optional[nn.Module] = None
 
     @abstractmethod
@@ -149,12 +156,13 @@ class FTModule(nn.Module):
         return output
 
 
-class QuantizedModule(nn.Module):
+class QuantizedModule(FTModule):
     def __init__(
         self,
-        weight: t.ByteTensor,
+        quant_weight: t.ByteTensor,
         absmax: t.FloatTensor,
         code: t.IntTensor,
+        **kwargs,
     ):
         """A frozen, 8-bit quantized module which accomodates LoRA adapters.
 
@@ -164,7 +172,10 @@ class QuantizedModule(nn.Module):
             absmax: the maximum block values of the weight tensor
             code: the quantization map
         """
-        self.register_buffer("quant_weight", weight.requires_grad_(False))
+        # Through MRO, this resolves to either FTLinear or FTEmbedding constructors.
+        super(QuantizedModule, self).__init__(**kwargs)
+
+        self.register_buffer("quant_weight", quant_weight.requires_grad_(False))
         self.register_buffer("quant_absmax", absmax.requires_grad_(False))
         self.register_buffer("quant_code", code.requires_grad_(False))
 
@@ -177,7 +188,7 @@ class QuantizedModule(nn.Module):
     def dequantize_weight(self) -> t.Tensor:
         """This method must dequantize the saved weight and return it."""
         return dequantize_blockwise(
-            self.quant_weight, absmax=self.absmax, code=self.quant_code
+            self.quant_weight, absmax=self.quant_absmax, code=self.quant_code
         )
 
 
@@ -195,14 +206,16 @@ class FTLinear(FTModule):
         bias: Optional[nn.Parameter] = None,
         save_weight: bool = True,
     ):
-        FTModule.__init__(self)
+        super(FTLinear, self).__init__()
         assert isinstance(bias, nn.Parameter) or bias is None
         self.out_features, self.in_features = weight.shape
-        self.bias = bias
-        if self.bias is not None:
+        if bias is not None:
+            self.register_parameter("bias", bias)
             self.bias.requires_grad = False
+        else:
+            self.bias = None
 
-        if save_weight:
+        if save_weight:  # avoids unnecessary saving when used in quantized layer
             self.weight = weight
 
     def _forward(self, x: t.Tensor, **_) -> t.Tensor:
@@ -215,7 +228,7 @@ class FTLinear(FTModule):
         return cls(linear.weight.data, linear.bias)
 
 
-class QuantizedLinear(FTLinear, QuantizedModule):
+class QuantizedLinear(QuantizedModule, FTLinear):
     def __init__(
         self,
         weight: t.ByteTensor,
@@ -223,8 +236,9 @@ class QuantizedLinear(FTLinear, QuantizedModule):
         code: t.IntTensor,
         bias: Optional[nn.Parameter] = None,
     ):
-        FTLinear.__init__(self, weight, bias, False)
-        QuantizedModule.__init__(self, weight, absmax, code)
+        super(QuantizedLinear, self).__init__(
+            weight, absmax, code, weight=weight, bias=bias, save_weight=False
+        )
 
     def _forward(self, x: t.Tensor, **_) -> t.Tensor:
         return F.linear(x, self.dequantize_weight(), self.bias)
@@ -234,8 +248,8 @@ class QuantizedLinear(FTLinear, QuantizedModule):
         """Converts a PyTorch nn.Linear module to a quantized 8-bit linear
         layer with frozen body parameters, which can accomodate a LoRA
         adapter"""
-        w, a, c = quantize_blockwise_lowmem(linear.weight)
-        return cls(w, a, c, bias=linear.bias)
+        int8_weight, state = quantize_blockwise_lowmem(linear.weight)
+        return cls(int8_weight, *state, bias=linear.bias)
 
 
 # Embedding Layers ------------------------------------------------------------
@@ -243,7 +257,7 @@ class QuantizedLinear(FTLinear, QuantizedModule):
 
 class FTEmbedding(FTModule):
     def __init__(self, weight: t.Tensor, save_weight: bool = True):
-        super().__init__()
+        super(FTEmbedding, self).__init__()
         self.num_embeddings, self.embedding_dim = weight.shape
         if save_weight:
             self.weight = weight
@@ -262,10 +276,11 @@ class FTEmbedding(FTModule):
         return cls(embedding.weight)
 
 
-class QuantizedEmbedding(FTEmbedding, QuantizedModule):
+class QuantizedEmbedding(QuantizedModule, FTEmbedding):
     def __init__(self, weight: t.ByteTensor, absmax: t.FloatTensor, code: t.IntTensor):
-        FTEmbedding.__init__(self, weight, False)
-        QuantizedModule.__init__(self, weight, absmax, code)
+        super(QuantizedEmbedding, self).__init__(
+            weight, absmax, code, weight=weight, save_weight=False
+        )
 
     def _forward(self, x: t.Tensor, **kwargs) -> t.Tensor:
         # TODO: use stable embedding?
@@ -288,7 +303,7 @@ class QuantizedEmbedding(FTEmbedding, QuantizedModule):
 
 class FTLearnedPositionalEmbedding(FTModule):
     def __init__(self, weight: t.Tensor, save_weight: bool = True):
-        super().__init__()
+        super(FTLearnedPositionalEmbedding, self).__init__()
         self.offset = 2
         self.num_embeddings, self.embedding_dim = weight.shape
         self.num_embeddings -= self.offset
@@ -321,11 +336,12 @@ class FTLearnedPositionalEmbedding(FTModule):
 
 
 class QuantizedLearnedPositionalEmbedding(
-    FTLearnedPositionalEmbedding, QuantizedModule
+    QuantizedModule, FTLearnedPositionalEmbedding
 ):
     def __init__(self, weight: t.ByteTensor, absmax: t.FloatTensor, code: t.IntTensor):
-        FTLearnedPositionalEmbedding.__init__(self, weight, save_weight=False)
-        QuantizedModule.__init__(self, weight, absmax, code)
+        super(QuantizedLearnedPositionalEmbedding, self).__init__(
+            weight, absmax, code, weight=weight, save_weight=False
+        )
 
     def forward(
         self, attention_mask: t.LongTensor, past_key_values_length: int = 0
@@ -422,10 +438,10 @@ def get_lora_adaptable_modules(
     """Returns a set of module names from the provided list of types onto which
     you can add LoRA adapters."""
 
-    if not _is_quantized(model):
-        print(
+    if not _is_quantized(model) and target_modules == [FTModule]:
+        raise RuntimeWarning(
             "WARNING: model not yet quantized."
-            "List of adaptable modules may not be correct."
+            "Results likely to be incorrect. Please speicfy target_modules manually."
         )
 
     module_names: set[str] = set()
@@ -439,8 +455,7 @@ def get_lora_adaptable_modules(
 def quantize_base_model(
     model: nn.Module, modules_not_to_quantize: Set[str] = {"lm_head"}
 ) -> nn.Module:
-    """This function is used to pre-emptively quantize a large pretrained
-    model.
+    """This function is used to quantize a large pretrained model.
 
     This helps to benefit from the memory savings that come from 8-bit
     quantisation of a model. You can also save this pre-quantized model to disk
@@ -614,7 +629,7 @@ def new_finetuned(
                     alpha=config.alpha,
                     dropout=config.dropout,
                     bias=config.bias,
-                    device=next(mod.parameters()).device,
+                    device=_get_ft_mod_device(mod),
                 )
                 # TODO: ensure that body weights are frozen?
 
@@ -628,16 +643,19 @@ def new_finetuned(
         ):
             if root_name in adapt_layers:
                 config = _get_config(embedding_config, root_name, ConfigType.embedding)
+                print(list(mod.parameters()))
                 mod.lora_adapter = EmbeddingAdapter(
                     num_embeddings=mod.num_embeddings,
                     embedding_dim=mod.embedding_dim,
                     r=config.r,
                     alpha=config.alpha,
-                    device=next(mod.parameters()).device,
+                    device=_get_ft_mod_device(mod),
                 )
 
             if root_name in modules_not_to_freeze:
                 new_model._modules[name] = plain_copy(mod)
+
+        # Unknown modules -----------------------------------------------------
 
         elif root_name in adapt_layers:
             print(f"WARNING: cannot adapt {name} of type {mod._get_name()}")
@@ -647,6 +665,6 @@ def new_finetuned(
 
         else:
             # set requires_grad to False on pretrained weights for good measure?
-            pass
+            new_model._modules[name].requires_grad_(False)
 
     return new_model
