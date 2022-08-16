@@ -53,7 +53,7 @@ def get_model_mem_consumption(model) -> int:
 
 
 def quantize_blockwise_lowmem(
-    matrix: t.Tensor, chunk_size: int = 2**20
+    matrix: nn.Parameter, chunk_size: int = 2**20
 ) -> Tuple[t.ByteTensor, t.FloatTensor, t.IntTensor]:
     """Breaks the `matrix` quantization into `chunk_size` chunks to lower the
     amount of data that must be simultaneously loaded into memory.
@@ -67,6 +67,8 @@ def quantize_blockwise_lowmem(
     code = None
     chunks = []
     absmaxes = []
+
+    orig_dtype = matrix.data.dtype
 
     try:
         flat_tensor = matrix.data.to(dtype=t.float32).view(-1)
@@ -83,6 +85,7 @@ def quantize_blockwise_lowmem(
 
     matrix_i8 = t.cat(chunks).reshape_as(matrix)
     absmax = t.cat(absmaxes)
+    matrix.data.to(dtype=orig_dtype)
     return matrix_i8, (absmax, code)
 
 
@@ -147,13 +150,6 @@ class FTModule(nn.Module):
         replaced."""
         pass
 
-    def _get_opt_param(self, key: str) -> Union[t.Tensor, None]:
-        # GEt a buffer, or return none
-        try:
-            return self.get_parameter(key)
-        except AttributeError:
-            return None
-
     def forward(self, *args, **kwargs) -> t.Tensor:
         """Adds adapter output to the normal layer output, if a LoRA adapter
         has been added for this layer."""
@@ -186,10 +182,10 @@ class QuantizedModule(FTModule):
         self.register_buffer("quant_absmax", absmax.requires_grad_(False))
         self.register_buffer("quant_code", code.requires_grad_(False))
 
-    def requires_grad_(self, requires_grad: bool = True) -> None:
-        self.quant_weight.requires_grad_(requires_grad)
-        self.quant_absmax.requires_grad_(False)
-        self.quant_code.requires_grad_(False)
+    # def requires_grad_(self, requires_grad: bool = True) -> None:
+    #     self.quant_weight.requires_grad_(requires_grad)
+    #     self.quant_absmax.requires_grad_(False)
+    #     self.quant_code.requires_grad_(False)
 
     def dequantize_weight(self) -> t.Tensor:
         """This method must dequantize the saved weight and return it."""
@@ -215,20 +211,22 @@ class FTLinear(FTModule):
         super(FTLinear, self).__init__()
         self.out_features, self.in_features = weight.shape
 
-        if bias is not None and isinstance(bias, nn.Parameter):
-            self.register_parameter("bias", bias)
+        if bias is not None:
+            assert isinstance(bias, nn.Parameter)
+        self.register_parameter("bias", bias)
 
         if save_weight:  # avoids unnecessary saving when used in quantized layer
             assert isinstance(weight, nn.Parameter)
             self.register_parameter("weight", weight)
 
     def _forward(self, x: t.Tensor, **_) -> t.Tensor:
-        return F.linear(x, self.weight, self._get_opt_param("bias"))
+        return F.linear(x, self.weight, self.bias)
 
     def requires_grad_(self, requires_grad: bool = True) -> None:
         if "weight" in self._parameters.keys():
             self._parameters["weight"].requires_grad_(requires_grad)
-        if "bias" in self._parameters.keys():
+        # if "bias" in self._parameters.keys():
+        if self.bias is not None:
             self._parameters["bias"].requires_grad_(requires_grad)
 
     @classmethod
@@ -236,6 +234,13 @@ class FTLinear(FTModule):
         """Converts a PyTorch nn.Linear layer into a linear layer which can
         accomodate a LoRA adapter."""
         return cls(linear.weight, linear.bias)
+
+    def quantized_copy(self) -> QuantizedLinear:
+        # tmp = copy_mod(self)
+        # assert tmp.lora_adapter is None
+        # if self.bias is not None:
+        #     tmp._parameters["bias"] = nn.Parameter(self.bias.clone())
+        return QuantizedLinear.from_linear(self)
 
 
 class QuantizedLinear(QuantizedModule, FTLinear):
@@ -251,13 +256,13 @@ class QuantizedLinear(QuantizedModule, FTLinear):
         )
 
     def _forward(self, x: t.Tensor, **_) -> t.Tensor:
-        return F.linear(x, self.dequantize_weight(), self._get_opt_param("bias"))
+        return F.linear(x, self.dequantize_weight(), self.bias)
 
     @classmethod
-    def from_linear(cls, linear: nn.Linear) -> "QuantizedLinear":
-        """Converts a PyTorch nn.Linear module to a quantized 8-bit linear
-        layer with frozen body parameters, which can accomodate a LoRA
-        adapter"""
+    def from_linear(cls, linear: Union[nn.Linear, FTLinear]) -> QuantizedLinear:
+        """Converts a PyTorch nn.Linear (or FTLinear) module to a quantized
+        8-bit linear layer with frozen body parameters, which can accomodate a
+        LoRA adapter"""
         int8_weight, state = quantize_blockwise_lowmem(linear.weight)
         return cls(int8_weight, *state, bias=linear.bias)
 
@@ -286,6 +291,11 @@ class FTEmbedding(FTModule):
         adapter."""
         return cls(embedding.weight)
 
+    def quantized_copy(self) -> QuantizedEmbedding:
+        # no need to deepcopy the current layer since weight will be copied
+        # when quantized.
+        return QuantizedEmbedding.from_embedding(self)
+
 
 class QuantizedEmbedding(QuantizedModule, FTEmbedding):
     def __init__(self, weight: t.ByteTensor, absmax: t.FloatTensor, code: t.IntTensor):
@@ -301,7 +311,9 @@ class QuantizedEmbedding(QuantizedModule, FTEmbedding):
         return F.embedding(x, self.dequantize_weight(), **kwargs).requires_grad_(True)
 
     @classmethod
-    def from_embedding(cls, embedding: nn.Embedding) -> QuantizedEmbedding:
+    def from_embedding(
+        cls, embedding: Union[nn.Embedding, FTEmbedding]
+    ) -> QuantizedEmbedding:
         """Converts a PyTorch nn.Embedding module to a quantized 8-bit version
         with frozen weights and an optional adapter."""
         weights_int8, state = quantize_blockwise_lowmem(embedding.weight)
@@ -345,6 +357,11 @@ class FTLearnedPositionalEmbedding(FTModule):
     def from_base(cls, embedding: nn.Embedding) -> FTLearnedPositionalEmbedding:
         return cls(embedding.weight)
 
+    def quantized_copy(self) -> QuantizedLearnedPositionalEmbedding:
+        # no need to deepcopy the current layer since weight will be copied
+        # when quantized.
+        return QuantizedLearnedPositionalEmbedding.from_base(self)
+
 
 class QuantizedLearnedPositionalEmbedding(
     QuantizedModule, FTLearnedPositionalEmbedding
@@ -368,8 +385,8 @@ class QuantizedLearnedPositionalEmbedding(
 
     @classmethod
     def from_base(
-        cls, embedding: nn.Embedding
-    ) -> "QuantizedLearnedPositionalEmbedding":
+        cls, embedding: Union[nn.Embedding, FTLearnedPositionalEmbedding]
+    ) -> QuantizedLearnedPositionalEmbedding:
         weights_int8, state = quantize_blockwise_lowmem(embedding.weight)
         return cls(weights_int8, *state)
 
@@ -532,6 +549,47 @@ def quantize_base_model(
     return model
 
 
+def _validate_new_ft_args(
+    model: nn.Module,
+    adapt_layers: Optional[Set[str]],
+    plain_layers: Set[str],
+    modules_not_to_freeze: Set[str],
+    modules_not_to_quantize: Set[str],
+) -> Tuple[Set[str], Set[str]]:
+    """Validates args for new_finetuned.
+    Note, sets are passed by reference."""
+
+    # does not support lora adapting plain layers
+
+    if adapt_layers is None:
+        # TODO: write tests to ensure that these are the same in both cases
+        if _is_quantized(model):
+            adapt_layers = get_lora_adaptable_modules(model)
+        else:
+            adapt_layers = get_lora_adaptable_modules(
+                model, target_modules=[nn.Linear, nn.Embedding]
+            )
+        for p in plain_layers:
+            adapt_layers.remove(p)
+
+    for m in plain_layers:
+        if m in adapt_layers:
+            raise ValueError(
+                f"{m} cannot feature in both plain_layers and adapt_layers"
+            )
+        modules_not_to_freeze.add(m)
+        modules_not_to_quantize.add(m)
+        print(f"added {m} to not freeze and not quantize")
+
+    quantized_modules = adapt_layers - modules_not_to_quantize
+
+    for m in modules_not_to_freeze:
+        if m in adapt_layers:
+            raise ValueError(f"{m} cannot both be un-frozen and have an adapter.")
+
+    return adapt_layers, quantized_modules
+
+
 def new_finetuned(
     model: nn.Module,
     adapt_layers: Optional[Set[str]] = None,
@@ -567,67 +625,54 @@ def new_finetuned(
     to treat as such in the ``plain_layers`` argument. These cannot intersect
     with ``adapt_layers``.
 
-
     To give full control over what happens to each layer, we also provide the
     modules_not_to_freeze and modules_not_to_quantize arguments.
 
-    To avoid quantizing the pretrained weights of a given module, add it to the
-    modules_not_to_quantize argument. If you want to directly fine-tune a
-    module rather than using a LoRA adapter, put its name into
-    modules_not_to_freeze. Adding a module to ``plain_layers`` has the same
-    effect as adding it to both of these extra arguments.
+    See README for more info.
 
     Args:
         model: base pretrained model. Can be quantized already.
         target_layers: the targets onto which to add LoRA adapters. Only Linear
             and Embedding layers are suitable for this. If omitted, all
             suitable layers are adapted.
+        plain_layers: layers not to quantize or freeze (or LoRA-adapt).
         embedding_config: the configuration to use for the added LoRA
             EmbeddingAdapters. Either a single config to apply to all layers, or a
             dict of configs for each embedding layer in target_layers.
         linear_config: the configuration to use for the added LoRA
             LinearAdapters. Either a single config to apply to all layers, or a
             dict of configs for each linear layer in target_layers.
-        modules_not_to_quantize: Sometimes we don't want to quantize a layer;
-            you can specify them here.
+        modules_not_to_quantize: don't quantize this layer. Error if already
+            quantized in previous quantize_base_model() call.
+            WARNING: not thorouoghly tested.
+        modules_not_to_freeze: don't freeze this layer's weights. Error if
+            adapted (i.e. base weights are not frozen, and there is an adaptor)
+            WARNING: not thorouoghly tested.
 
     Raises:
         ValueError: For not exhaustively specifying the adapter configs when
             using a dict in either ``embedding_config`` or ``linear_config``.
     """
 
-    new_model = copy_mod(model)
-
-    if adapt_layers is None:
-        if _is_quantized(new_model):
-            adapt_layers = get_lora_adaptable_modules(new_model)
-        else:
-            adapt_layers = get_lora_adaptable_modules(
-                new_model, target_modules=[nn.Linear, nn.Embedding]
-            )
-        for p in plain_layers:
-            adapt_layers.remove(p)
-
-    # validate arguments
-
-    for m in plain_layers:
-        if m in adapt_layers:
-            raise ValueError(
-                f"{m} cannot feature in both plain_layers and adapt_layers"
-            )
-        modules_not_to_freeze.add(m)
-        modules_not_to_quantize.add(m)
-
-    for m in modules_not_to_freeze:
-        if m in adapt_layers:
-            raise ValueError(f"{m} cannot both be un-frozen and have an adapter.")
+    adapt_layers, quantized_modules = _validate_new_ft_args(
+        model,
+        adapt_layers,
+        plain_layers,
+        modules_not_to_freeze,
+        modules_not_to_quantize,
+    )
 
     if not _is_quantized(model):
-        quantize_base_model(model, modules_not_to_quantize)
+        # Here, we run quantize_base_model but with modules_not_to_quantize set
+        # to everything, thus allowing us to place LoRA adapters on all
+        # compatible layers.
 
-    # print(f"modules not to freeze: {modules_not_to_freeze}")
-    # print(f"modules not to quantize: {modules_not_to_quantize}")
-    # print(f"adapt layers: quantize: {adapt_layers}")
+        mntq = get_lora_adaptable_modules(
+            model, target_modules=[nn.Linear, nn.Embedding]
+        )
+        quantize_base_model(model, mntq)
+
+    new_model = copy_mod(model)
 
     for module in list(new_model.modules()):
         for name, child in module.named_children():
@@ -635,6 +680,10 @@ def new_finetuned(
             # Linear Modules -------------------------------------------------------
 
             if isinstance(child, FTLinear):  # QuantizedLinear or FTLinear
+
+                if name in quantized_modules and not isinstance(child, QuantizedModule):
+                    module._modules[name] = child.quantized_copy()
+
                 if name in adapt_layers:
                     config = _get_config(linear_config, name, ConfigType.linear)
                     module._modules[name].requires_grad_(False)
@@ -656,6 +705,9 @@ def new_finetuned(
             elif isinstance(child, FTEmbedding) or isinstance(
                 child, FTLearnedPositionalEmbedding
             ):
+                if name in quantized_modules and not isinstance(child, QuantizedModule):
+                    module._modules[name] = child.quantized_copy()
+
                 if name in adapt_layers:
                     config = _get_config(embedding_config, name, ConfigType.embedding)
                     module._modules[name].requires_grad_(False)

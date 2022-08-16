@@ -8,17 +8,31 @@ import finetuna as ft
 import transformers
 
 
+class _TestNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.em1 = nn.Embedding(num_embeddings=10, embedding_dim=100)
+        self.fc1 = nn.Linear(5, 10)
+        self.ln1 = nn.LayerNorm(10)
+        self.ac1 = nn.ReLU()
+        self.fc2 = nn.Linear(10, 5)
+        self.lm_head = nn.Linear(5, 1, False)
+
+    def forward(self, x: t.Tensor) -> t.Tensor:
+        return self.lm_head(self.fc2(self.ac1(self.ln1(self.fc1(self.em1(x))))))
+
+
 def test_version_exists():
     assert ft.__version__ is not None
 
 
-@pytest.mark.slow
-def test_load_finetuned():
-    model_name = "facebook/opt-125m"
-    base_model = transformers.AutoModelForCausalLM.from_pretrained(model_name)
-
-    model_1 = ft.new_finetuned(base_model)
-    assert model_1 is not None
+# @pytest.mark.slow
+# def test_load_finetuned():
+#     model_name = "facebook/opt-125m"
+#     base_model = transformers.AutoModelForCausalLM.from_pretrained(model_name)
+#
+#     model_1 = ft.new_finetuned(base_model)
+#     assert model_1 is not None
 
 
 def test_copy_mod():
@@ -34,22 +48,8 @@ def test_copy_mod():
 
 
 def test__is_quantized():
-    net = nn.Sequential(nn.Linear(1, 20), nn.Linear(20, 1))
+    net = _TestNet()
     assert not ft.main._is_quantized(net)
-
-
-class _TestNet(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.em1 = nn.Embedding(num_embeddings=10, embedding_dim=100)
-        self.fc1 = nn.Linear(5, 10)
-        self.ln1 = nn.LayerNorm(10)
-        self.ac1 = nn.ReLU()
-        self.fc2 = nn.Linear(10, 5)
-        self.lm_head = nn.Linear(5, 1)
-
-    def forward(self, x: t.Tensor) -> t.Tensor:
-        return self.lm_head(self.fc2(self.ac1(self.ln1(self.fc1(self.em1(x))))))
 
 
 def test_quantize_base():
@@ -276,6 +276,128 @@ def test_init_QuantizedLearnedPositionalEmbedding():
 # New Finetuned ---------------------------------------------------------------
 
 
+def test_new_finetuned_unquantized():
+    """Tests calling new_finetuned on an unquantized model"""
+    net = _TestNet()  # .train()
+    new = ft.new_finetuned(net)
+
+    # net will have been prepared for adapters
+    assert type(net.em1) == ft.FTEmbedding
+    assert hasattr(net.em1, "lora_adapter")
+    assert net.em1.lora_adapter is None
+
+    assert type(net.fc1) == ft.FTLinear
+    assert hasattr(net.fc1, "lora_adapter")
+    assert net.fc1.lora_adapter is None
+    assert net.fc1.bias is not None
+
+    assert type(net.ln1) == nn.LayerNorm
+    assert not hasattr(net.ln1, "lora_adapter")
+
+    assert type(net.ac1) == nn.ReLU
+    assert not hasattr(net.ac1, "lora_adapter")
+
+    assert type(net.fc2) == ft.FTLinear
+    assert hasattr(net.fc2, "lora_adapter")
+    assert net.fc2.lora_adapter is None
+
+    assert type(net.lm_head) == ft.FTLinear
+    assert hasattr(net.lm_head, "lora_adapter")
+    assert net.lm_head.lora_adapter is None
+    assert net.lm_head.bias is None
+
+    # -----
+
+    assert type(new.em1) == ft.QuantizedEmbedding
+    assert hasattr(new.em1, "lora_adapter")
+    # TODO: test the embedding adapter parameters in separate tests
+    assert type(new.em1.lora_adapter) == ft.EmbeddingAdapter
+
+    assert type(new.fc1) == ft.QuantizedLinear
+    assert hasattr(new.fc1, "lora_adapter")
+    assert type(new.fc1.lora_adapter) == ft.LinearAdapter
+    assert type(net.fc1.bias) == nn.Parameter
+    # shares bias with underlying model:
+    assert new.fc1.bias.data.data_ptr() == net.fc1.bias.data.data_ptr()
+    assert not hasattr(new.fc1, "weight")  # only has quantized weight
+    assert new.fc1.bias.requires_grad == False
+
+    assert type(new.ln1) == nn.LayerNorm
+    assert not hasattr(new.ln1, "lora_adapter")
+
+    assert type(new.ac1) == nn.ReLU
+    assert not hasattr(new.ac1, "lora_adapter")
+
+    # owing tot he default args of new_finetuned, modules named "lm_head" are
+    # treated as plain layers
+    assert type(new.lm_head) == ft.FTLinear
+    assert hasattr(new.lm_head, "lora_adapter")
+    assert new.lm_head.lora_adapter is None
+    assert new.lm_head.weight.data.data_ptr() != net.lm_head.weight.data_ptr()
+
+
+def test_validate_ft_args():
+    adaptable_layers = {"em1", "fc1", "fc2", "lm_head"}
+
+    # unquantized model
+    net = _TestNet()
+    n_adapt_layers, _ = ft.main._validate_new_ft_args(net, None, set(), set(), set())
+    assert n_adapt_layers == adaptable_layers
+
+    # quantized model
+    ft.quantize_base_model(net, set())
+    n_adapt_layers, _ = ft.main._validate_new_ft_args(net, None, set(), set(), set())
+    assert n_adapt_layers == adaptable_layers
+
+    # defaults for unquantized net
+    net = _TestNet()
+    adapt_layers = None
+    plain_layers = {"lm_head"}
+    modules_not_to_quantize = set()
+    modules_not_to_freeze = set()
+    n_adapt_layers, quantized_modules = ft.main._validate_new_ft_args(
+        net, adapt_layers, plain_layers, modules_not_to_quantize, modules_not_to_freeze
+    )
+    assert n_adapt_layers == {"em1", "fc1", "fc2"}
+    assert quantized_modules == {"em1", "fc1", "fc2"}
+    assert modules_not_to_quantize == {"lm_head"}
+    assert modules_not_to_freeze == {"lm_head"}
+
+    # defaults for quantized net
+    net = _TestNet()
+    ft.quantize_base_model(net)
+    adapt_layers = None
+    plain_layers = {"lm_head"}
+    modules_not_to_quantize = set()
+    modules_not_to_freeze = set()
+    n_adapt_layers, quantized_modules = ft.main._validate_new_ft_args(
+        net, adapt_layers, plain_layers, modules_not_to_quantize, modules_not_to_freeze
+    )
+    assert n_adapt_layers == {"em1", "fc1", "fc2"}
+    assert quantized_modules == {"em1", "fc1", "fc2"}
+    assert modules_not_to_quantize == {"lm_head"}
+    assert modules_not_to_freeze == {"lm_head"}
+
+    # non-defaults for non-quantized net
+    net = _TestNet()
+    # - will by default convert all possible modules into FTModules and freeze
+    # their parameters.
+    # - we request to LoRA adapt fc1; which entails quantizing the base params
+    adapt_layers = {"fc1"}
+    plain_layers = {"lm_head"}
+    modules_not_to_quantize = {"em1"}  # don't adapt this, but also don't quantize this
+    modules_not_to_freeze = set()
+    n_adapt_layers, quantized_modules = ft.main._validate_new_ft_args(
+        net, adapt_layers, plain_layers, modules_not_to_quantize, modules_not_to_freeze
+    )
+    assert n_adapt_layers == {"fc1"}
+    assert quantized_modules == {"fc1"}
+    assert modules_not_to_quantize == {"em1", "lm_head"}
+    assert modules_not_to_freeze == {
+        "lm_head"
+    }  # em1 and fc2 are still frozen, although not adapted
+
+
 def test_new_finetuned_default():
     """Tests the new_finetuned function with default arguments.
 
@@ -286,6 +408,29 @@ def test_new_finetuned_default():
     nf1 = ft.new_finetuned(net)
 
     assert nf1 is not None
+
+    ll = {"lm_head"}  # non-quantized linear
+    ql = {"fc1", "fc2"}  # quantized linear
+    el = {}  # non-quantized embedding
+    qe = {"em1"}  # quantized embedding
+    ml = {"ac1", "ln1"}  # vanilla nn module
+
+    for n, l in nf1.named_children():
+        if n in ll:
+            assert type(l) == ft.FTLinear
+        elif n in ql:
+            assert type(l) == ft.QuantizedLinear
+        elif n in el:
+            assert type(l) == ft.FTEmbedding
+        elif n in qe:
+            assert type(l) == ft.QuantizedEmbedding
+        elif n in ml:
+            assert isinstance(l, nn.Module)
+            assert not isinstance(l, ft.FTModule)
+
+    # for ((n1, p1), (n2, p2)) in zip(net.named_parameters(), nf1.named_parameters()):
+    #     print(n1)
+    # assert False
 
 
 # Gradient tests --------------------------------------------------------------

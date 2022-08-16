@@ -11,7 +11,7 @@ This repository provides wrappers around LLMs for
 
 ## Install
 
-First, you need PyTorch installed with `cudatoolkit` (see [link](https://docs.google.com/document/d/1JxSo4lQgMDBdnd19VBEoaG-mMfQupQ3XvOrgmRAVtpU/edit#)).  You don't seem to get `cudatoolkit` when you install PyTorch using `pip`.  You may be able to install `cudatoolkit` separately, but we haven't tested that.  Our tested proceedure is to remove previous installs of PyTorch.  e.g. if PyTorch is currently installed through pip: 
+First, you need PyTorch installed with `cudatoolkit` (see [link](https://docs.google.com/document/d/1JxSo4lQgMDBdnd19VBEoaG-mMfQupQ3XvOrgmRAVtpU/edit#)).  You don't seem to get `cudatoolkit` when you install PyTorch using `pip`.  You may be able to install `cudatoolkit` separately, but we haven't tested that.  Our tested proceedure is to remove previous installs of PyTorch.  e.g. if PyTorch is currently installed through pip:
 ```bash
 pip uninstall torch
 ```
@@ -27,6 +27,74 @@ pip install -e .
 ## Notes on bitsandbytes
 `bitsandbytes` was forked in a confusing way.
 The actual repo is https://github.com/TimDettmers/bitsandbytes, and this version installs with `pip install bitsandbytes`.  However, if you search on Google, you get the older repo https://github.com/facebookresearch/bitsandbytes and this version installs with `pip install bitsandbytes-cudaXXX`.  We need the newer version, installed with `pip install bitsandbytes`.
+
+## Usage
+
+### Optional Explicit Quantization
+
+If you have memory constraints which mean that you can't keep a full model
+loaded into memory, then use the ``quantize_base_model(model)`` function to
+convert all compatible (i.e. nn.Linear and nn.Embedding) modules into frozen,
+8-bit versions.
+
+```python
+base_model = transformers.AutoModelForCausalLM.from_pretrained(model_name)
+ft.quantize_base_model(base_model)
+```
+
+### Creating New Finetuned Models
+
+Once you have a base model, you will create some new models to fine-tune using
+the ``new_finetuned`` function. The most basic invocation without any arguments
+will:
+
+- 'freeze' and quantize all the pretrained Embedding and Linear modules (except 'lm_head')
+- add LoRA adapters to all Embedding and Linear modules (except 'lm_head'), using default adapter configs
+- 'freeze' all other nn.Module parameters
+
+```python
+ft1 = ft.new_finetuned(base_model)
+```
+
+#### ``adapt_layers`` argument
+
+If you wish to only adapt certain layers, then you can specify these layers in
+the ``adapt_layers`` argument:
+
+```python
+ft2 = ft.new_finetuned(base_model, adapt_layers={"q_proj", "v_proj"})
+```
+This means that we:
+- 'freeze' and quantize all the pretrained Embedding and Linear modules (except 'lm_head')
+- add LoRA adapters to q_proj and v_proj only
+- 'freeze' all other nn.Module parameters
+
+#### ``plain_layers`` argument
+
+Sometimes we want to keep a layer the same as in the base model, and fine-tune
+it directly.
+
+An example is the 'lm_head' module from the previous examples: it is not frozen
+nor quantized, so when we do gradient steps, we can update its parameters as
+usual.
+
+You can specify nn.Linear layers, nn.Embedding layers or any arbitrary
+nn.Module in the ``plain_layers`` argument when creating a new finetuned model:
+
+```python
+ft2 = ft.new_finetuned(
+    base_model,
+    adapt_layers={"q_proj", "v_proj"},
+    plain_layers={"lm_head", "out_proj", "layer_norm"}
+)
+```
+This means that we:
+- 'freeze' and quantize all the pretrained Embedding and Linear modules (except 'lm_head', 'out_proj' and 'layer_norm')
+- add LoRA adapters to q_proj and v_proj only
+- 'freeze' all other nn.Module parameters, except 'lm_head', 'out_proj' and 'layer_norm'
+
+(TODO: document the separate use of the ``modules_not_to_quantize`` and
+``modules_not_to_freeze`` arguments for more granular control.)
 
 ## Example
 
@@ -46,7 +114,7 @@ model_1 = ft.new_finetuned(base_model)
 # Can specify granular parameters, if required
 model_2 = ft.new_finetuned(
     base_model,
-    target_layers = {'embed_tokens', 'embed_posotions', 'q_proj', 'v_proj'},
+    adapt_layers = {'embed_tokens', 'embed_posotions', 'q_proj', 'v_proj'},
     embedding_config=ft.EmbeddingAdapterConfig(r=4, alpha=1),
     linear_config={
         'q_proj': ft.LinearAdapterConfig(r=8, alpha=1, dropout=0.0, bias=False),
