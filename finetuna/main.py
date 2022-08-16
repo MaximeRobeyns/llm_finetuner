@@ -697,7 +697,7 @@ def new_finetuned(
                     ).requires_grad_(True)
 
                 if name in modules_not_to_freeze:
-                    module._modules[name] = plain_copy(child)
+                    module._modules[name] = plain_copy(child).to(dtype=t.float32)
 
             # Embedding Modules ---------------------------------------------------
 
@@ -719,7 +719,7 @@ def new_finetuned(
                     ).requires_grad_(True)
 
                 if name in modules_not_to_freeze:
-                    module._modules[name] = plain_copy(child)
+                    module._modules[name] = plain_copy(child).to(dtype=t.float32)
 
             # Unknown modules -----------------------------------------------------
 
@@ -730,6 +730,8 @@ def new_finetuned(
                 # Fine-tune arbitrary (i.e. not Linear or Embedding) layers.
                 # - these cannot be shared between different fine-tuned models
                 # - must require_grad.
-                module._modules[name] = copy.deepcopy(child).requires_grad_(True)
+                module._modules[name] = (
+                    copy.deepcopy(child).requires_grad_(True).to(dtype=t.float32)
+                )
 
     return new_model
