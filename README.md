@@ -28,74 +28,6 @@ pip install -e .
 `bitsandbytes` was forked in a confusing way.
 The actual repo is https://github.com/TimDettmers/bitsandbytes, and this version installs with `pip install bitsandbytes`.  However, if you search on Google, you get the older repo https://github.com/facebookresearch/bitsandbytes and this version installs with `pip install bitsandbytes-cudaXXX`.  We need the newer version, installed with `pip install bitsandbytes`.
 
-## Usage
-
-### Optional Explicit Quantization
-
-If you have memory constraints which mean that you can't keep a full model
-loaded into memory, then use the ``quantize_base_model(model)`` function to
-convert all compatible (i.e. nn.Linear and nn.Embedding) modules into frozen,
-8-bit versions.
-
-```python
-base_model = transformers.AutoModelForCausalLM.from_pretrained(model_name)
-ft.quantize_base_model(base_model)
-```
-
-### Creating New Finetuned Models
-
-Once you have a base model, you will create some new models to fine-tune using
-the ``new_finetuned`` function. The most basic invocation without any arguments
-will:
-
-- 'freeze' and quantize all the pretrained Embedding and Linear modules (except 'lm_head')
-- add LoRA adapters to all Embedding and Linear modules (except 'lm_head'), using default adapter configs
-- 'freeze' all other nn.Module parameters
-
-```python
-ft1 = ft.new_finetuned(base_model)
-```
-
-#### ``adapt_layers`` argument
-
-If you wish to only adapt certain layers, then you can specify these layers in
-the ``adapt_layers`` argument:
-
-```python
-ft2 = ft.new_finetuned(base_model, adapt_layers={"q_proj", "v_proj"})
-```
-This means that we:
-- 'freeze' and quantize all the pretrained Embedding and Linear modules (except 'lm_head')
-- add LoRA adapters to q_proj and v_proj only
-- 'freeze' all other nn.Module parameters
-
-#### ``plain_layers`` argument
-
-Sometimes we want to keep a layer the same as in the base model, and fine-tune
-it directly.
-
-An example is the 'lm_head' module from the previous examples: it is not frozen
-nor quantized, so when we do gradient steps, we can update its parameters as
-usual.
-
-You can specify nn.Linear layers, nn.Embedding layers or any arbitrary
-nn.Module in the ``plain_layers`` argument when creating a new finetuned model:
-
-```python
-ft2 = ft.new_finetuned(
-    base_model,
-    adapt_layers={"q_proj", "v_proj"},
-    plain_layers={"lm_head", "out_proj", "layer_norm"}
-)
-```
-This means that we:
-- 'freeze' and quantize all the pretrained Embedding and Linear modules (except 'lm_head', 'out_proj' and 'layer_norm')
-- add LoRA adapters to q_proj and v_proj only
-- 'freeze' all other nn.Module parameters, except 'lm_head', 'out_proj' and 'layer_norm'
-
-(TODO: document the separate use of the ``modules_not_to_quantize`` and
-``modules_not_to_freeze`` arguments for more granular control.)
-
 ## Example
 
 ```python
@@ -105,12 +37,12 @@ import transformers
 model_name = 'facebook/opt-125m'
 base_model = transformers.AutoModelForCausalLM.from_pretrained(model_name)
 
-# You can manually quantize a pre-trained model and save it so you don't have
-# to re-quantize it each time:
+# If memory constraints require it, you can manually pre-quantize a model:
 ft.quantize_base_model(base_model)
 
 # Create new finetuned models using either the base or quantized model
 model_1 = ft.new_finetuned(base_model)
+
 # Can specify granular parameters, if required
 model_2 = ft.new_finetuned(
     base_model,
@@ -145,3 +77,83 @@ model_2.load_state_dict("/save/path.pt")
 # Load only adapter state with strict=False
 model_2.load_state_dict("/save/path_finetuned.pt", strict=False)
 ```
+
+## Usage
+
+### Optional Explicit Quantization
+
+If you have memory constraints which mean that you can't keep a full model
+loaded into memory, then use the ``quantize_base_model(model)`` function to
+convert all compatible (i.e. nn.Linear and nn.Embedding) modules into frozen,
+8-bit versions.
+
+```python
+base_model = transformers.AutoModelForCausalLM.from_pretrained(model_name)
+ft.quantize_base_model(base_model)
+```
+
+Note that if you quantize a layer in ``quantize_base_model``, you cannot then
+require that it is no longer quantized in ``new_finetuned``. Later versions of
+this library may support this, but issue a warning owing to the loss of
+accuracy incurred by the round trip from FP32 -> INT8 -> FP32.
+
+If you think that you might need an un-quantized version of a layer, add it to
+the ``modules_not_to_quantize`` argument when callin ``quantize_base_model``.
+Un-quantized layers will be automatically quantized during ``new_finetuned`` if
+needed (although their un-quantized, pre-trained weights will stay in memory as
+part of the base model).
+
+### Creating New Finetuned Models
+
+Once you have a base model, you will create some new models to fine-tune using
+the ``new_finetuned`` function. The most basic invocation without any arguments
+will:
+
+- 'freeze' and quantize all the pretrained Embedding and Linear modules (except 'lm_head')
+- add LoRA adapters to all Embedding and Linear modules (except 'lm_head'), using default adapter configs
+- 'freeze' all other nn.Module parameters
+
+```python
+ft1 = ft.new_finetuned(base_model)
+```
+
+#### Using the ``adapt_layers`` argument
+
+If you wish to only adapt certain layers, then you can specify these layers in
+the ``adapt_layers`` argument:
+
+```python
+ft2 = ft.new_finetuned(base_model, adapt_layers={"q_proj", "v_proj"})
+```
+This means that we:
+- 'freeze' and quantize all the pretrained Embedding and Linear modules (except 'lm_head')
+- add LoRA adapters to q_proj and v_proj only
+- 'freeze' all other nn.Module parameters
+
+#### Using the ``plain_layers`` argument
+
+Sometimes we want to keep a layer the same as in the base model, and fine-tune
+it directly.
+
+An example is the 'lm_head' module from the previous examples: it is not frozen
+nor quantized, so when we do gradient steps, we can update its parameters as
+usual.
+
+You can specify nn.Linear layers, nn.Embedding layers or any arbitrary
+nn.Module in the ``plain_layers`` argument when creating a new finetuned model:
+
+```python
+ft2 = ft.new_finetuned(
+    base_model,
+    adapt_layers={"q_proj", "v_proj"},
+    plain_layers={"lm_head", "out_proj", "layer_norm"}
+)
+```
+This means that we:
+- 'freeze' and quantize all the pretrained Embedding and Linear modules (except 'lm_head', 'out_proj' and 'layer_norm')
+- add LoRA adapters to q_proj and v_proj only
+- 'freeze' all other nn.Module parameters, except 'lm_head', 'out_proj' and 'layer_norm'
+
+(TODO: document the separate use of the ``modules_not_to_quantize`` and
+``modules_not_to_freeze`` arguments for more granular control.)
+

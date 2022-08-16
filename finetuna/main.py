@@ -579,7 +579,6 @@ def _validate_new_ft_args(
             )
         modules_not_to_freeze.add(m)
         modules_not_to_quantize.add(m)
-        print(f"added {m} to not freeze and not quantize")
 
     quantized_modules = adapt_layers - modules_not_to_quantize
 
