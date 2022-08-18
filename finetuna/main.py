@@ -1,12 +1,16 @@
 from __future__ import annotations
+
+import io
 import copy
-from enum import Enum
 import math
 import torch as t
 import torch.nn as nn
 import torch.nn.functional as F
+import warnings
+import contextlib
 
 from abc import abstractmethod
+from enum import Enum
 from typing import (
     Any,
     Type,
@@ -18,9 +22,16 @@ from typing import (
     List,
 )  # for Python 3.8 compat
 from dataclasses import dataclass
-from torch.cuda.amp import custom_fwd, custom_bwd
-from bitsandbytes.functional import quantize_blockwise, dequantize_blockwise
-from bitsandbytes.nn.modules import Linear8bitLt, StableEmbedding, Int8Params
+
+# from torch.cuda.amp import custom_fwd, custom_bwd
+
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    with contextlib.redirect_stdout(io.StringIO()):
+        from bitsandbytes.functional import quantize_blockwise, dequantize_blockwise
+
+# from bitsandbytes.nn.modules import Linear8bitLt, StableEmbedding, Int8Params
 
 
 # Utility functions -----------------------------------------------------------

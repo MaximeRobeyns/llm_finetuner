@@ -34,9 +34,12 @@ with open("README.md", "r") as f:
     long_description = f.read()
 
 
+with open("finetuna/__version__") as v:
+    version = v.read()
+
 setup(
     name="finetuna",
-    version="0.0.1",
+    version=version,
     description="Efficiently fine-tune large pretrained models.",
     long_description=long_description,
     url="https://github.com/MaximeRobeyns/llm_finetuner",

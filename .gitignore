@@ -1,16 +1,13 @@
 outputs
 **__pycache__**
 __pycache__/
-llm_vae.egg-info/
+finetuna.egg-info/
 planning.org
 job.sh
 interactive.sh
 sync
 setup.sh
 docs/build
-docs/source/archive
-outputs
-finetuned_models
 reference
 **_legacy.py
 **_legacy
