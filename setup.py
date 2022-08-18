@@ -34,8 +34,8 @@ with open("README.md", "r") as f:
     long_description = f.read()
 
 
-with open("finetuna/__version__") as v:
-    version = v.read()
+with open("finetuna/__version__.py") as v:
+    version = v.read().split('"')[-2]
 
 setup(
     name="finetuna",
