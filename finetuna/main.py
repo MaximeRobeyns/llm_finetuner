@@ -83,9 +83,9 @@ def quantize_blockwise_lowmem(
     orig_dtype = matrix.data.dtype
 
     try:
-        flat_tensor = matrix.data.to(dtype=t.float32).view(-1)
+        flat_tensor = matrix.data.float().view(-1)
     except Exception:
-        flat_tensor = matrix.data.to(dtype=t.float32).contiguous().view(-1)
+        flat_tensor = matrix.data.float().contiguous().view(-1)
 
     for i in range((matrix.numel() - 1) // chunk_size + 1):
         input_chunk = flat_tensor[i * chunk_size : (i + 1) * chunk_size].clone()
@@ -209,12 +209,12 @@ class FTLinear(FTModule):
     def _forward(self, x: t.Tensor, **_) -> t.Tensor:
         return F.linear(x, self.weight, self.bias)
 
-    def requires_grad_(self, requires_grad: bool = True) -> None:
-        if "weight" in self._parameters.keys():
-            self._parameters["weight"].requires_grad_(requires_grad)
-        # if "bias" in self._parameters.keys():
-        if self.bias is not None:
-            self._parameters["bias"].requires_grad_(requires_grad)
+    # def requires_grad_(self, requires_grad: bool = True) -> None:
+    #     if "weight" in self._parameters.keys():
+    #         self._parameters["weight"].requires_grad_(requires_grad)
+    #     # if "bias" in self._parameters.keys():
+    #     if self.bias is not None:
+    #         self._parameters["bias"].requires_grad_(requires_grad)
 
     @classmethod
     def from_linear(cls, linear: nn.Linear) -> FTLinear:
@@ -235,7 +235,7 @@ class QuantizedLinear(QuantizedModule, FTLinear):
         self,
         weight: nn.Parameter,
         bias: Optional[nn.Parameter] = None,
-        has_fp16_weights: bool = False,
+        has_fp16_weights: bool = True,
     ):
         """
         Args:
@@ -250,7 +250,7 @@ class QuantizedLinear(QuantizedModule, FTLinear):
             self.in_features,
             self.out_features,
             bias=bias is not None,
-            threshold=6,
+            threshold=6.0,
             has_fp16_weights=has_fp16_weights,
         )
         self._qlinear.load_state_dict(
@@ -260,14 +260,16 @@ class QuantizedLinear(QuantizedModule, FTLinear):
             self._qlinear.load_state_dict(
                 {"bias": bias.requires_grad_(False)}, strict=False
             )
-        self._qlinear = self._qlinear.to("cuda")
+        self._qlinear = self._qlinear.cuda().half()
 
     def _forward(self, x: t.Tensor, **_) -> t.Tensor:
-        return self._qlinear(x.to(dtype=t.float16))
+        output = self._qlinear(x.half())
+        output = output.float()
+        return output
 
     @classmethod
     def from_linear(
-        cls, linear: Union[nn.Linear, FTLinear], has_fp16_weights: bool = False
+        cls, linear: Union[nn.Linear, FTLinear], has_fp16_weights: bool = True
     ) -> QuantizedLinear:
         """Converts a PyTorch nn.Linear (or FTLinear) module to a quantized
         8-bit linear layer with optionally frozen body parameters, which can
@@ -313,7 +315,9 @@ class QuantizedEmbedding(QuantizedModule, FTEmbedding):
 
     def _forward(self, x: t.Tensor, **kwargs) -> t.Tensor:
         # See FTEmbedding for note on requires_grad.
-        return self._qembedding(x, **kwargs).requires_grad_(True)
+        qembed = self._qembedding(x, **kwargs).requires_grad_(True).float()
+        assert not t.any(qembed.isnan()), "nans in embedding"
+        return qembed
 
     @classmethod
     def from_embedding(
@@ -388,7 +392,7 @@ class QuantizedLearnedPositionalEmbedding(
     ) -> t.Tensor:
         pos = self._get_pos(attention_mask, past_key_values_length)
         deq_weight = self.dequantize_weight()
-        output = F.embedding(pos, deq_weight)
+        output = F.embedding(pos, deq_weight).float()
 
         if self.lora_adapter:
             return self.lora_adapter(pos) + output
@@ -554,7 +558,7 @@ def quantize_base_model(
                 model._modules[name] = QuantizedEmbedding.from_embedding(mod)
         else:
             # For any other module in the pretrained model, freeze weights.
-            model._modules[name].requires_grad_(False)
+            model._modules[name] = model._modules[name].requires_grad_(False)
 
     model.register_buffer("_is_quantized", t.tensor([True]))
 
@@ -709,7 +713,7 @@ def new_finetuned(
                     ).requires_grad_(True)
 
                 if name in modules_not_to_freeze:
-                    module._modules[name] = plain_copy(child).to(dtype=t.float32)
+                    module._modules[name] = plain_copy(child)
 
             # Embedding Modules ---------------------------------------------------
 
@@ -731,7 +735,7 @@ def new_finetuned(
                     ).requires_grad_(True)
 
                 if name in modules_not_to_freeze:
-                    module._modules[name] = plain_copy(child).to(dtype=t.float32)
+                    module._modules[name] = plain_copy(child)
 
             # Unknown modules -----------------------------------------------------
 
@@ -742,8 +746,6 @@ def new_finetuned(
                 # Fine-tune arbitrary (i.e. not Linear or Embedding) layers.
                 # - these cannot be shared between different fine-tuned models
                 # - must require_grad.
-                module._modules[name] = (
-                    copy.deepcopy(child).requires_grad_(True).to(dtype=t.float32)
-                )
+                module._modules[name] = copy.deepcopy(child).requires_grad_(True)
 
     return new_model
