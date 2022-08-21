@@ -168,6 +168,7 @@ class FTModule(nn.Module):
         output = self._forward(*args, **kwargs)
         if self.lora_adapter:
             return self.lora_adapter(args[0]) + output
+            # return self.lora_adapter(args[0]) * output
         return output
 
 
@@ -284,6 +285,7 @@ class FTEmbedding(FTModule):
     def __init__(self, weight: nn.Parameter, save_weight: bool = True):
         super(FTEmbedding, self).__init__()
         self.num_embeddings, self.embedding_dim = weight.shape
+        self.offset = 0
 
         if save_weight:
             self.register_parameter("weight", weight)
@@ -311,7 +313,7 @@ class QuantizedEmbedding(QuantizedModule, FTEmbedding):
     def __init__(self, weight: nn.Parameter):
         super(QuantizedEmbedding, self).__init__(weight=weight, save_weight=False)
         self._qembedding = StableEmbedding(self.num_embeddings, self.embedding_dim)
-        self._qembedding.load_state_dict({"weight": weight})
+        self._qembedding.load_state_dict({"weight": weight}, strict=False)
 
     def _forward(self, x: t.Tensor, **kwargs) -> t.Tensor:
         # See FTEmbedding for note on requires_grad.
@@ -445,7 +447,7 @@ class LinearAdapter(nn.Module):
         tmp = self.dropout(x) @ self.A.T @ self.B.T
         if self.bias is not None:
             tmp += self.bias
-        return tmp * self.scaling
+        return tmp  # + 1  # * self.scaling
 
 
 class EmbeddingAdapter(nn.Module):
@@ -469,7 +471,7 @@ class EmbeddingAdapter(nn.Module):
         self.to(device=device)
 
     def forward(self, x: t.Tensor, *args, **kwargs) -> t.Tensor:
-        return (F.embedding(x, self.A.T, **kwargs) @ self.B.T) * self.scaling
+        return F.embedding(x, self.A.T, **kwargs) @ self.B.T  # * self.scaling
 
 
 # API functions ================================================================
@@ -494,6 +496,18 @@ def get_lora_adaptable_modules(
             if any([isinstance(c, t) for t in target_modules]):
                 module_names.add(n)
     return module_names
+
+
+def prepare_base_model(
+    model: nn.Module, modules_not_to_quantize: Set[str] = {"lm_head"}
+) -> nn.Module:
+    """Alias for quantize_base_model.
+
+    This is more descriptive of what we're doing in this function; since it
+    mainly serves to add 'receivers' for LoRA adapters and transform
+    appropriate nn.Modules, not just quantization.
+    """
+    return quantize_base_model(model, modules_not_to_quantize)
 
 
 def quantize_base_model(
@@ -563,6 +577,74 @@ def quantize_base_model(
     model.register_buffer("_is_quantized", t.tensor([True]))
 
     return model
+
+
+def to_base_model(model: nn.Module) -> nn.Module:
+
+    for name, mod in model.named_children():
+
+        # Recurse
+        if len(list(mod.children())) > 0:
+            to_base_model(mod)
+
+        # Replace modules
+
+        # Linear:
+        if isinstance(mod, FTLinear):
+            if type(mod) is QuantizedLinear:
+                qweight = mod._qlinear.weight
+                weight = nn.Parameter(qweight.dequantize().data)
+            else:
+                weight = mod.weight
+            bias = mod.bias
+            if mod.lora_adapter is not None:
+                with t.no_grad():
+                    C = mod.lora_adapter.B @ mod.lora_adapter.A
+                    C = C.to(weight.device)
+                    weight += C
+                    if bias is not None:
+                        assert mod.lora_adapter.bias is not None
+                        B = mod.lora_adapter.bias.to(bias.device)
+                        bias += B
+            model._modules[name] = nn.Linear(
+                mod.in_features, mod.out_features, bias=bias is not None
+            )
+            model._modules[name].weight = weight
+            model._modules[name].bias = bias
+
+        elif isinstance(mod, FTEmbedding) or isinstance(
+            mod, FTLearnedPositionalEmbedding
+        ):
+            if type(mod) is QuantizedEmbedding:
+                qweight = mod._qembedding.weight
+                weight = nn.Parameter(qweight.dequantize().data)
+            elif type(mod) is QuantizedLearnedPositionalEmbedding:
+                weight = nn.Parameter(mod.dequantize_weight())
+            else:
+                weight = mod.weight
+            if mod.lora_adapter is not None:
+                with t.no_grad():
+                    # C = mod.lora_adapter.A.T @ mod.lora_adapter.B.T
+                    C = mod.lora_adapter.B @ mod.lora_adapter.A
+                    C = C.to(weight.device).T
+                    weight += C
+            model._modules[name] = nn.Embedding(mod.num_embeddings, mod.embedding_dim)
+            model._modules[name].weight = weight
+
+    if hasattr(model, "_is_quantized"):
+        model._is_quantized = t.tensor([False])
+
+    return model
+
+
+def to_base_model_state_dict(model: nn.Module) -> Dict:
+    """
+    Merges the LoRA adapter weights to the base model weights so that the
+    fine-tuned model may be used independentally of this library (i.e. usin).
+
+    Iterate over the model's modules, replacing each module to
+    """
+    pass
 
 
 def _validate_new_ft_args(
@@ -708,7 +790,7 @@ def new_finetuned(
                         r=config.r,
                         alpha=config.alpha,
                         dropout=config.dropout,
-                        bias=config.bias,
+                        bias=config.bias and (child.bias is not None),
                         device=_get_ft_mod_device(child),
                     ).requires_grad_(True)
 
@@ -727,7 +809,7 @@ def new_finetuned(
                     config = _get_config(embedding_config, name, ConfigType.embedding)
                     module._modules[name].requires_grad_(False)
                     module._modules[name].lora_adapter = EmbeddingAdapter(
-                        num_embeddings=child.num_embeddings,
+                        num_embeddings=child.num_embeddings + child.offset,
                         embedding_dim=child.embedding_dim,
                         r=config.r,
                         alpha=config.alpha,

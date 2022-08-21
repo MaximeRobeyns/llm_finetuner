@@ -94,6 +94,20 @@ def test_quantize_base():
                 assert not isinstance(net._modules[n], ft.FTModule)
 
 
+def test_round_trip():
+    # quantize a model and go back again
+    model = transformers.AutoModelForCausalLM.from_pretrained("facebook/opt-125m")
+    _tmp = model.state_dict()
+    pd1 = {k: v.clone() for k, v in _tmp.items()}
+
+    ft1 = ft.new_finetuned(model, plain_layers=set())
+    new = ft.to_base_model(ft1).cpu()
+
+    for n, p in new.named_parameters():
+        assert n in pd1.keys()
+        assert t.allclose(p.data, pd1[n].data)
+
+
 def test_get_adaptable():
     # attempt get_adaptable for non-initialised model should raise exception
     net = _TestNet()
