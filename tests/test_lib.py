@@ -96,7 +96,9 @@ def test_quantize_base():
 
 def test_round_trip():
     # quantize a model and go back again
-    model = transformers.AutoModelForCausalLM.from_pretrained("facebook/opt-125m")
+    model = transformers.AutoModelForCausalLM.from_pretrained(
+        "facebook/opt-125m", torch_dtype=t.float16
+    )
     _tmp = model.state_dict()
     pd1 = {k: v.clone() for k, v in _tmp.items()}
 
@@ -189,24 +191,27 @@ def test_init_FTLinear_no_bias():
 
 def test_init_QuantizedLinear():
     n = 10
-    base_linear = nn.Linear(n, 1)
+    base_linear = nn.Linear(n, 5).cuda()
     new_linear = ft.QuantizedLinear.from_linear(base_linear)
     assert new_linear.in_features == base_linear.in_features
     assert new_linear.out_features == base_linear.out_features
 
-    assert not hasattr(new_linear, "weight")
-    assert new_linear.quant_weight is not None
-    assert new_linear.quant_absmax is not None
-    assert new_linear.quant_code is not None
+    assert "weight" not in new_linear._parameters.keys()
+    assert new_linear._qlinear is not None
+    assert "weight" in new_linear._qlinear._parameters.keys()
 
     assert base_linear.bias is not None
-    assert new_linear.bias is not None
-    assert t.all(base_linear.bias.data == new_linear.bias.data)
-    assert base_linear.bias.data.data_ptr() == new_linear.bias.data.data_ptr()
+    # assert not hasattr(new_linear, "bias")
+    assert "bias" not in new_linear._parameters.keys()
+    assert new_linear._qlinear.bias is not None
+    assert "bias" in new_linear._qlinear._parameters.keys()
 
-    # TODO: require tighter accuracy than 1e-2?
-    x = t.randn(n)
-    assert t.allclose(base_linear(x), new_linear(x), 1e-1)
+    x = t.randn(1, n).cuda()
+    a = base_linear(x)
+    b = new_linear(x)
+    assert a.shape == b.shape
+    # NOTE: 1e-2 accuracy isn't great...
+    assert t.allclose(a, b, 1e-2)
 
 
 # embedding -------------------------------------------------------------------
@@ -235,21 +240,28 @@ def test_init_FTEmbedding():
 def test_init_QuantizedEmbedding():
     num_embeddings = 10
     embedding_dim = 10
-    base_embedding = nn.Embedding(num_embeddings, embedding_dim)
+    base_embedding = nn.Embedding(num_embeddings, embedding_dim).cuda()
     new_embedding = ft.QuantizedEmbedding.from_embedding(base_embedding)
 
     assert new_embedding.num_embeddings == num_embeddings
     assert new_embedding.embedding_dim == embedding_dim
 
-    assert not hasattr(new_embedding, "weight")
-    assert new_embedding.quant_weight is not None
-    assert new_embedding.quant_absmax is not None
-    assert new_embedding.quant_code is not None
+    assert "weight" not in new_embedding._parameters.keys()
+    assert new_embedding._qembedding is not None
+    assert "weight" in new_embedding._qembedding._parameters.keys()
+    assert new_embedding._qembedding.weight is not None
 
-    x = t.randint(0, num_embeddings, (10,))
-    # 1e-1 accuracy is frankly pathetic. Don't use 8-bit quantization for
-    # embeddings!
-    assert t.allclose(base_embedding(x), new_embedding(x), 1e-1)
+    x = t.randint(0, num_embeddings, (10,)).cuda()
+    assert t.allclose(base_embedding(x), new_embedding(x))
+    # assert t.allclose(a, b)
+
+    stable_embedding = ft.QuantizedEmbedding.from_embedding(base_embedding, stable=True)
+
+    x = t.randint(0, num_embeddings, (10,)).cuda()
+    a = base_embedding(x)
+    b = stable_embedding(x)
+    assert a.shape == b.shape
+    assert not t.allclose(a, b)
 
 
 # LPE -------------------------------------------------------------------------
@@ -273,18 +285,27 @@ def test_init_FTLearnedPositionalEmbedding():
 
 
 def test_init_QuantizedLearnedPositionalEmbedding():
-    num_embeddings = 10
+    num_embeddings = 5
     embedding_dim = 10
-    base_embedding = nn.Embedding(num_embeddings, embedding_dim)
+    offset = 2
+    # We have to pretend that this is a LearnedPositionalEmbedding from OPT
+    base_embedding = nn.Embedding(num_embeddings, embedding_dim).cuda()
+
     new_embedding = ft.QuantizedLearnedPositionalEmbedding.from_base(base_embedding)
 
-    assert new_embedding.num_embeddings == num_embeddings - new_embedding.offset
+    assert new_embedding.num_embeddings == num_embeddings - offset
     assert new_embedding.embedding_dim == embedding_dim
 
-    assert not hasattr(new_embedding, "weight")
-    assert new_embedding.quant_weight is not None
-    assert new_embedding.quant_absmax is not None
-    assert new_embedding.quant_code is not None
+    assert "weight" not in new_embedding._parameters.keys()
+    assert new_embedding._qembedding is not None
+    assert "weight" in new_embedding._qembedding._parameters.keys()
+    assert new_embedding._qembedding.weight is not None
+
+    stable_embedding = ft.QuantizedLearnedPositionalEmbedding.from_base(
+        base_embedding, stable=True
+    )
+    assert stable_embedding.num_embeddings == num_embeddings - offset
+    assert stable_embedding.embedding_dim == embedding_dim
 
 
 # New Finetuned ---------------------------------------------------------------
@@ -332,8 +353,8 @@ def test_new_finetuned_unquantized():
     assert type(new.fc1.lora_adapter) == ft.LinearAdapter
     assert type(net.fc1.bias) == nn.Parameter
     # shares bias with underlying model:
-    assert new.fc1.bias.data.data_ptr() == net.fc1.bias.data.data_ptr()
-    assert not hasattr(new.fc1, "weight")  # only has quantized weight
+    assert "weight" not in new.fc1._parameters.keys()
+    assert "weight" in new.fc1._qlinear._parameters.keys()  # only has quantized weight
     assert new.fc1.bias.requires_grad == False
 
     assert type(new.ln1) == nn.LayerNorm

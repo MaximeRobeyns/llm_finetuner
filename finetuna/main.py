@@ -31,6 +31,7 @@ with warnings.catch_warnings():
     with contextlib.redirect_stdout(io.StringIO()):
         from bitsandbytes.functional import quantize_blockwise, dequantize_blockwise
         from bitsandbytes.nn import Linear8bitLt, StableEmbedding
+        from bitsandbytes.nn.modules import Embedding as BNBEmbedding
 
 # from bitsandbytes.nn.modules import Linear8bitLt, StableEmbedding, Int8Params
 
@@ -48,8 +49,10 @@ def _is_quantized(model: nn.Module) -> bool:
 
 
 def _get_ft_mod_device(mod: FTModule) -> t.device:
-    if isinstance(mod, QuantizedModule):
-        return next(mod.buffers()).device
+    if isinstance(mod, QuantizedLinear):
+        return next(mod._qlinear.parameters()).device
+    elif isinstance(mod, QuantizedModule):
+        return next(mod._qembedding.parameters()).device
     else:
         return next(mod.parameters()).device
 
@@ -175,11 +178,13 @@ class FTModule(nn.Module):
 class QuantizedModule(FTModule):
     def __init__(
         self,
+        weight: nn.Parameter,
         **kwargs,
     ):
         """A frozen, 8-bit quantized module which accomodates LoRA adapters."""
         # Through MRO, this resolves to either FTLinear or FTEmbedding constructors.
-        super(QuantizedModule, self).__init__(**kwargs)
+        super(QuantizedModule, self).__init__(weight=weight, **kwargs)
+        self.weight_dtype = weight.dtype
 
 
 # Layers ======================================================================
@@ -199,23 +204,19 @@ class FTLinear(FTModule):
         super(FTLinear, self).__init__()
         self.out_features, self.in_features = weight.shape
 
-        if bias is not None:
-            assert isinstance(bias, nn.Parameter)
-        self.register_parameter("bias", bias)
+        # QuantizedLinear layers cannot share bias with underlying otherwise it
+        # will be duplicatd
 
         if save_weight:  # avoids unnecessary saving when used in quantized layer
             assert isinstance(weight, nn.Parameter)
             self.register_parameter("weight", weight)
 
+            if bias is not None:
+                assert isinstance(bias, nn.Parameter)
+            self.register_parameter("bias", bias)
+
     def _forward(self, x: t.Tensor, **_) -> t.Tensor:
         return F.linear(x, self.weight, self.bias)
-
-    # def requires_grad_(self, requires_grad: bool = True) -> None:
-    #     if "weight" in self._parameters.keys():
-    #         self._parameters["weight"].requires_grad_(requires_grad)
-    #     # if "bias" in self._parameters.keys():
-    #     if self.bias is not None:
-    #         self._parameters["bias"].requires_grad_(requires_grad)
 
     @classmethod
     def from_linear(cls, linear: nn.Linear) -> FTLinear:
@@ -254,14 +255,29 @@ class QuantizedLinear(QuantizedModule, FTLinear):
             threshold=6.0,
             has_fp16_weights=has_fp16_weights,
         )
-        self._qlinear.load_state_dict(
-            {"weight": weight.requires_grad_(False)}, strict=False
-        )
         if bias is not None:
             self._qlinear.load_state_dict(
-                {"bias": bias.requires_grad_(False)}, strict=False
+                {
+                    "weight": weight.requires_grad_(False),
+                    "bias": bias.requires_grad_(False),
+                }
             )
-        self._qlinear = self._qlinear.cuda().half()
+        else:
+            self._qlinear.load_state_dict({"weight": weight.requires_grad_(False)})
+        self._qlinear = self._qlinear.half().cuda()
+
+    @property
+    def deq_weight(self) -> nn.Parameter:
+        return nn.Parameter(
+            self._qlinear.weight.dequantize().to(dtype=self.weight_dtype)
+        )
+
+    @property
+    def deq_bias(self) -> Optional[nn.Parameter]:
+        tmp_bias = self._qlinear.bias
+        if tmp_bias is not None:
+            tmp_bias.to(dtype=self.weight_dtype)
+        return tmp_bias
 
     def _forward(self, x: t.Tensor, **_) -> t.Tensor:
         output = self._qlinear(x.half())
@@ -310,24 +326,42 @@ class FTEmbedding(FTModule):
 
 
 class QuantizedEmbedding(QuantizedModule, FTEmbedding):
-    def __init__(self, weight: nn.Parameter):
+    def __init__(self, weight: nn.Parameter, stable: bool = False):
+        """
+        Args:
+            stable: whether to use a StableEmbedding (with additional
+                LayerNorm). As the name suggests, this leads to more stable
+                training, but loses parity with the underlying model and can
+                cause trouble when converting weights.
+        """
         super(QuantizedEmbedding, self).__init__(weight=weight, save_weight=False)
-        self._qembedding = StableEmbedding(self.num_embeddings, self.embedding_dim)
-        self._qembedding.load_state_dict({"weight": weight}, strict=False)
+        if stable:
+            self._qembedding = StableEmbedding(self.num_embeddings, self.embedding_dim)
+            # missing layer norm parameters, so strict = False
+            self._qembedding.load_state_dict({"weight": weight}, strict=False)
+        else:
+            self._qembedding = BNBEmbedding(self.num_embeddings, self.embedding_dim)
+            self._qembedding.load_state_dict({"weight": weight})
+        self._qembedding = self._qembedding.cuda()
 
     def _forward(self, x: t.Tensor, **kwargs) -> t.Tensor:
         # See FTEmbedding for note on requires_grad.
         qembed = self._qembedding(x, **kwargs).requires_grad_(True).float()
-        assert not t.any(qembed.isnan()), "nans in embedding"
         return qembed
+
+    @property
+    def deq_weight(self) -> nn.Parameter:
+        return nn.Parameter(
+            self._qembedding.weight.dequantize().to(dtype=self.weight_dtype)
+        )
 
     @classmethod
     def from_embedding(
-        cls, embedding: Union[nn.Embedding, FTEmbedding]
+        cls, embedding: Union[nn.Embedding, FTEmbedding], stable: bool = False
     ) -> QuantizedEmbedding:
         """Converts a PyTorch nn.Embedding module to a quantized 8-bit version
         with optionally frozen weights and an optional adapter."""
-        return cls(embedding.weight)
+        return cls(embedding.weight, stable)
 
 
 # LearnedPositionalEmbedding --------------------------------------------------
@@ -335,7 +369,7 @@ class QuantizedEmbedding(QuantizedModule, FTEmbedding):
 
 
 class FTLearnedPositionalEmbedding(FTModule):
-    def __init__(self, weight: t.Tensor, save_weight: bool = True):
+    def __init__(self, weight: nn.Parameter, save_weight: bool = True):
         super(FTLearnedPositionalEmbedding, self).__init__()
         self.offset = 2
         self.num_embeddings, self.embedding_dim = weight.shape
@@ -376,37 +410,40 @@ class FTLearnedPositionalEmbedding(FTModule):
 class QuantizedLearnedPositionalEmbedding(
     QuantizedModule, FTLearnedPositionalEmbedding
 ):
-    def __init__(self, weight: t.ByteTensor, absmax: t.FloatTensor, code: t.IntTensor):
+    def __init__(self, weight: nn.Parameter, stable: bool = False):
         super(QuantizedLearnedPositionalEmbedding, self).__init__(
             weight=weight, save_weight=False
         )
-        self.register_buffer("quant_weight", weight.requires_grad_(False))
-        self.register_buffer("quant_absmax", absmax.requires_grad_(False))
-        self.register_buffer("quant_code", code.requires_grad_(False))
-
-    def dequantize_weight(self) -> t.Tensor:
-        return dequantize_blockwise(
-            self.quant_weight, absmax=self.quant_absmax, code=self.quant_code
-        )
+        if stable:
+            self._qembedding = StableEmbedding(*weight.shape)
+            self._qembedding.load_state_dict({"weight": weight}, strict=False)
+        else:
+            self._qembedding = BNBEmbedding(*weight.shape)
+            self._qembedding.load_state_dict({"weight": weight})
+        self._qembedding = self._qembedding.cuda()
 
     def forward(
         self, attention_mask: t.LongTensor, past_key_values_length: int = 0
     ) -> t.Tensor:
         pos = self._get_pos(attention_mask, past_key_values_length)
-        deq_weight = self.dequantize_weight()
-        output = F.embedding(pos, deq_weight).float()
+        output = self._qembedding(pos).requires_grad_(True).float()
 
         if self.lora_adapter:
             return self.lora_adapter(pos) + output
 
         return output
 
+    @property
+    def deq_weight(self) -> nn.Parameter:
+        return nn.Parameter(self._qembedding.weight.dequantize().to(self.weight_dtype))
+
     @classmethod
     def from_base(
-        cls, embedding: Union[nn.Embedding, FTLearnedPositionalEmbedding]
+        cls,
+        embedding: Union[nn.Embedding, FTLearnedPositionalEmbedding],
+        stable: bool = False,
     ) -> QuantizedLearnedPositionalEmbedding:
-        weights_int8, state = quantize_blockwise_lowmem(embedding.weight)
-        return cls(weights_int8, *state)
+        return cls(embedding.weight, stable)
 
 
 # LoRA Adapters ================================================================
@@ -591,11 +628,7 @@ def to_base_model(model: nn.Module) -> nn.Module:
 
         # Linear:
         if isinstance(mod, FTLinear):
-            if type(mod) is QuantizedLinear:
-                qweight = mod._qlinear.weight
-                weight = nn.Parameter(qweight.dequantize().data)
-            else:
-                weight = mod.weight
+            weight = mod.deq_weight if isinstance(mod, QuantizedModule) else mod.weight
             bias = mod.bias
             if mod.lora_adapter is not None:
                 with t.no_grad():
@@ -610,18 +643,13 @@ def to_base_model(model: nn.Module) -> nn.Module:
                 mod.in_features, mod.out_features, bias=bias is not None
             )
             model._modules[name].weight = weight
-            model._modules[name].bias = bias
+            if bias is not None:
+                model._modules[name].bias = bias
 
         elif isinstance(mod, FTEmbedding) or isinstance(
             mod, FTLearnedPositionalEmbedding
         ):
-            if type(mod) is QuantizedEmbedding:
-                qweight = mod._qembedding.weight
-                weight = nn.Parameter(qweight.dequantize().data)
-            elif type(mod) is QuantizedLearnedPositionalEmbedding:
-                weight = nn.Parameter(mod.dequantize_weight())
-            else:
-                weight = mod.weight
+            weight = mod.deq_weight if isinstance(mod, QuantizedModule) else mod.weight
             if mod.lora_adapter is not None:
                 with t.no_grad():
                     # C = mod.lora_adapter.A.T @ mod.lora_adapter.B.T
