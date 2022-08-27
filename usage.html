@@ -1,0 +1,533 @@
+<!doctype html>
+<html class="no-js" lang="en">
+  <head><meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <meta name="color-scheme" content="light dark"><meta name="generator" content="Docutils 0.17.1: http://docutils.sourceforge.net/" />
+
+<meta property="og:title" content="Usage" />
+  
+<meta property="og:type" content="website" />
+  
+<meta property="og:url" content="usage.html" />
+  
+<meta property="og:description" content="Basic Usage: The procedure for using this library involves: Loading a pre-trained language model, deciding which modules in your model you’d like to quantize to 8 bit (note, only nn.Linear and nn.E..." />
+  <link rel="index" title="Index" href="genindex.html" /><link rel="search" title="Search" href="search.html" /><link rel="next" title="Overview of LLM Optimisations" href="overview_of_optimisations.html" /><link rel="prev" title="finetuna Documentation" href="index.html" />
+
+    <meta name="generator" content="sphinx-4.5.0, furo 2022.04.07"/>
+        <title>Usage - finetuna</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?digest=68f4518137b9aefe99b631505a2064c3c42c9852" />
+    <link rel="stylesheet" type="text/css" href="_static/copybutton.css" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/furo-extensions.css?digest=30d1aed668e5c3a91c3e3bf6a60b675221979f0e" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f8f8f8;
+  --color-code-foreground: black;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-half" viewBox="0 0 24 24">
+    <title>Auto light/dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-shadow">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M13 12h5" />
+      <path d="M13 15h4" />
+      <path d="M13 18h1" />
+      <path d="M13 9h4" />
+      <path d="M13 6h1" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc">
+<label class="overlay sidebar-overlay" for="__navigation">
+  <div class="visually-hidden">Hide navigation sidebar</div>
+</label>
+<label class="overlay toc-overlay" for="__toc">
+  <div class="visually-hidden">Hide table of contents sidebar</div>
+</label>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <div class="visually-hidden">Toggle site navigation sidebar</div>
+        <i class="icon"><svg><use href="#svg-menu"></use></svg></i>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="index.html"><div class="brand">finetuna</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle">
+          <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+          <svg class="theme-icon-when-auto"><use href="#svg-sun-half"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <div class="visually-hidden">Toggle table of contents sidebar</div>
+        <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand centered" href="index.html">
+  
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="_static/fish.webp" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">finetuna</span>
+  
+</a><form class="sidebar-search-container" method="get" action="search.html" role="search">
+  <input class="sidebar-search" placeholder=Search name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="overview_of_optimisations.html">Overview of LLM Optimisations</a></li>
+<li class="toctree-l1"><a class="reference internal" href="troubleshooting.html">Troubleshooting Your Installation</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container"><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle">
+              <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+              <svg class="theme-icon-when-auto"><use href="#svg-sun-half"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <div class="visually-hidden">Toggle table of contents sidebar</div>
+            <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+          </label>
+        </div>
+        <article role="main">
+          <span class="target" id="usage"></span><section id="id1">
+<h1>Usage<a class="headerlink" href="#id1" title="Permalink to this headline">#</a></h1>
+<section id="basic-usage">
+<h2>Basic Usage<a class="headerlink" href="#basic-usage" title="Permalink to this headline">#</a></h2>
+<p>The procedure for using this library involves:</p>
+<ol class="arabic simple">
+<li><p>Loading a pre-trained language model</p></li>
+<li><p>deciding which modules in your model you’d like to quantize to 8 bit (note,
+only <code class="docutils literal notranslate"><span class="pre">nn.Linear</span></code> and <code class="docutils literal notranslate"><span class="pre">nn.Embedding</span></code> modules can be quantized at the
+moment.).</p></li>
+<li><p>optionally, explicitly quantizing the pretrained model to save memory</p></li>
+<li><p>creating one or more fine-tuned models</p></li>
+</ol>
+<section id="loading-a-pre-trained-language-model">
+<h3>1. Loading a Pre-Trained Language Model<a class="headerlink" href="#loading-a-pre-trained-language-model" title="Permalink to this headline">#</a></h3>
+<p>This follows the standard procedure for loading models from e.g. HuggingFace.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">transformers</span>
+
+<span class="n">model_name</span> <span class="o">=</span> <span class="s1">'facebook/opt-1.3b'</span>
+<span class="n">base_model</span> <span class="o">=</span> <span class="n">transformers</span><span class="o">.</span><span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>However, if you face memory issues, you can install <a class="reference external" href="https://github.com/huggingface/accelerate">HF accelerate</a> (<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">accelerate</span></code>) to
+use <code class="docutils literal notranslate"><span class="pre">low_cpu_mem_usage=True</span></code> and also load the memory in <code class="docutils literal notranslate"><span class="pre">float16</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">base_model</span> <span class="o">=</span> <span class="n">transformers</span><span class="o">.</span><span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+    <span class="n">model_name</span><span class="p">,</span>
+    <span class="n">torch_dtype</span><span class="o">=</span><span class="n">t</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span>
+    <span class="n">low_cpu_mem_usage</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">use_cache</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>Please don’t load the model with HuggingFace’s recent <code class="docutils literal notranslate"><span class="pre">load_in_8bit=True</span></code> as
+this will interfere with <code class="docutils literal notranslate"><span class="pre">finetuna</span></code>. Of course if you are only interested in
+quantization, then you should just use this feature and not use <code class="docutils literal notranslate"><span class="pre">finetuna</span></code>!</p>
+</section>
+<section id="viewing-adaptable-modules">
+<h3>2. Viewing Adaptable Modules<a class="headerlink" href="#viewing-adaptable-modules" title="Permalink to this headline">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">finetuna</span></code> fine-tunes pre-trained models by freezing the pre-trained weights
+(quantized or not) in each network module, and adding low-rank adapters on top
+of these modules.</p>
+<p>By default, the library will add adapters to <em>all</em> the layers, but this can be
+unnecessary and you can save a lot of memory and computation by scrupulously
+selecting the modules you add adapters to.</p>
+<p>To get a list of your model’s modules that you can add adapters to, first
+quantize the model, then use the <code class="docutils literal notranslate"><span class="pre">get_lora_adaptable_modules</span></code> helper function:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">finetuna</span> <span class="k">as</span> <span class="nn">ft</span>
+
+<span class="n">ft</span><span class="o">.</span><span class="n">prepare_base_model</span><span class="p">(</span><span class="n">base_model</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ft</span><span class="o">.</span><span class="n">get_lora_adaptable_modules</span><span class="p">(</span><span class="n">base_model</span><span class="p">))</span>
+</pre></div>
+</div>
+</section>
+<section id="quantizing-the-model">
+<h3>3. Quantizing the Model<a class="headerlink" href="#quantizing-the-model" title="Permalink to this headline">#</a></h3>
+<p>Quantizing the model refers to turning all (or a subset of) the frozen
+pretrained model weights to int8 using the quantization scheme described in
+<a class="reference external" href="https://arxiv.org/pdf/2208.07339.pdf">LLM.int8()</a>.</p>
+<p>This is an optional step and will be done automatically when creating new
+finetuned models in the next step if <code class="docutils literal notranslate"><span class="pre">base_model</span></code> is not yet quantized.</p>
+<p>If however you have memory constraints that mean that you can’t keep a full
+model loaded into memory, then use <code class="docutils literal notranslate"><span class="pre">quantize_base_model(base_model)</span></code> to
+convert all the <code class="docutils literal notranslate"><span class="pre">nn.Linear</span></code> and <code class="docutils literal notranslate"><span class="pre">nn.Embedding</span></code> layers to 8bit:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ft</span><span class="o">.</span><span class="n">quantize_base_model</span><span class="p">(</span><span class="n">base_model</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">quantize_base_model</span></code> function will modify the <code class="docutils literal notranslate"><span class="pre">base_model</span></code>
+in-place, although it returns a reference to it for convenience.</p>
+</div>
+<p>This function also accepts an additional <code class="docutils literal notranslate"><span class="pre">modules_not_to_freeze</span></code> argument:
+this does what it says on the tin, and doesn’t quantize the modules listed in
+this set. By default, this is set to <code class="docutils literal notranslate"><span class="pre">lm_head</span></code> (a module name shared by
+<code class="docutils literal notranslate"><span class="pre">GPT-</span></code> and <code class="docutils literal notranslate"><span class="pre">OPT-</span></code> models in HuggingFace), since we often want to retain full
+precision for the language model head.</p>
+<p>If you <em>do</em> want to quantize the language modelling head, you can set this to
+teh empty set:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ft</span><span class="o">.</span><span class="n">quantize_base_model</span><span class="p">(</span><span class="n">base_model</span><span class="p">,</span> <span class="n">modules_not_to_quantize</span><span class="o">=</span><span class="nb">set</span><span class="p">())</span>
+</pre></div>
+</div>
+<p>Also note that if you quantize a module in the <code class="docutils literal notranslate"><span class="pre">quantize_base_model</span></code> function,
+subsequently requiring that this module is no longer quantized when calling
+<code class="docutils literal notranslate"><span class="pre">new_finetuned</span></code> will result in an error. Later versions of <code class="docutils literal notranslate"><span class="pre">finetuna</span></code>
+may support this, but the loss of accuracy owing to the round-trip from
+<code class="docutils literal notranslate"><span class="pre">float32</span></code> -&gt; <code class="docutils literal notranslate"><span class="pre">int8</span></code> -&gt; <code class="docutils literal notranslate"><span class="pre">float32</span></code> is clearly sub-optimal. Un-quantized
+modules <em>can</em> however later be quantized ad-hoc in <code class="docutils literal notranslate"><span class="pre">new_finetuned</span></code>.</p>
+<p>As a result, if you think you may require a module not to be quantized in the
+future, it is safer to add it to the <code class="docutils literal notranslate"><span class="pre">modules_not_to_quantize</span></code> set, assuming
+you have the memory overhead.</p>
+</section>
+<section id="creating-fine-tuned-models">
+<h3>4. Creating Fine-Tuned models<a class="headerlink" href="#creating-fine-tuned-models" title="Permalink to this headline">#</a></h3>
+<p>Now that we have the base model in hand, we are ready to create some new models
+to fine-tune using the <code class="docutils literal notranslate"><span class="pre">new_finetuned</span></code> function. The most basic invocation,
+called without arguments will</p>
+<ul class="simple">
+<li><p>freeze and quantise all the pretrained <code class="docutils literal notranslate"><span class="pre">nn.Linear</span></code> and <code class="docutils literal notranslate"><span class="pre">nn.Embedding</span></code>
+modules (with <code class="docutils literal notranslate"><span class="pre">lm_head</span></code> in the <code class="docutils literal notranslate"><span class="pre">modules_not_to_quantize</span></code> set by default).
+If you previously quantized the base model, then this step is skipped.</p></li>
+<li><p>add LoRA adapters to all Embedding and Linear layers using the default adapter
+configs (once again, the unquantized <code class="docutils literal notranslate"><span class="pre">lm_head</span></code> is treated as an exception by
+default, and optimised directly in its original datatype).</p></li>
+<li><p>all other <code class="docutils literal notranslate"><span class="pre">base_model</span></code> parameters which cannot be adapted are frozen</p></li>
+</ul>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ft1</span> <span class="o">=</span> <span class="n">ft</span><span class="o">.</span><span class="n">new_finetuned</span><span class="p">(</span><span class="n">base_model</span><span class="p">)</span>
+</pre></div>
+</div>
+<section id="using-the-adapt-layers-argument">
+<h4>Using the <code class="docutils literal notranslate"><span class="pre">adapt_layers</span></code> argument<a class="headerlink" href="#using-the-adapt-layers-argument" title="Permalink to this headline">#</a></h4>
+<p>If you only wish to adapt certain layers, then you can specify these layers in
+the <code class="docutils literal notranslate"><span class="pre">adapt_layers</span></code> argument:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ft1</span> <span class="o">=</span> <span class="n">ft</span><span class="o">.</span><span class="n">new_finetuned</span><span class="p">(</span><span class="n">base_model</span><span class="p">,</span> <span class="n">adapt_layers</span><span class="o">=</span><span class="p">{</span><span class="s2">"q_proj"</span><span class="p">,</span> <span class="s2">"v_proj"</span><span class="p">})</span>
+</pre></div>
+</div>
+<p>In the above, we</p>
+<ul class="simple">
+<li><p>freeze and quantize all pretrained Embedding and Linear layers in
+<code class="docutils literal notranslate"><span class="pre">base_model</span></code> (excluding <code class="docutils literal notranslate"><span class="pre">lm_head</span></code>)</p></li>
+<li><p>add LoRA adapters to <code class="docutils literal notranslate"><span class="pre">q_proj</span></code> and <code class="docutils literal notranslate"><span class="pre">v_proj</span></code> matrices only</p></li>
+<li><p>freeze everything else</p></li>
+</ul>
+<p>In general, adapting just the query and value projection matrices in the
+attention modules will be effective in fine-tuning the model, while greatly
+decreasing the memory and computation required to do so.</p>
+<p>See Section 7.1 of the <a class="reference external" href="https://arxiv.org/pdf/2106.09685.pdf">LoRa paper</a> for
+a discussion of which layers are worth adapting.</p>
+</section>
+<section id="using-the-plain-layers-argument">
+<h4>Using the <code class="docutils literal notranslate"><span class="pre">plain_layers</span></code> argument<a class="headerlink" href="#using-the-plain-layers-argument" title="Permalink to this headline">#</a></h4>
+<p>Occasionally, we want to keep a layer the same as in the base model, and
+fine-tune it directly.</p>
+<p>The running example of this has been the <code class="docutils literal notranslate"><span class="pre">lm_head</span></code> module, which is not frozen
+nor quantized by default. When we call <code class="docutils literal notranslate"><span class="pre">opt.step()</span></code>, we update its parameters
+directly, not its adapter.</p>
+<p>You can specify other layers to keep exactly as in the underlying <code class="docutils literal notranslate"><span class="pre">base_model</span></code>
+by adding them to the <code class="docutils literal notranslate"><span class="pre">plain_layers</span></code> argument when creating a new finetuned
+model:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ft2</span> <span class="o">=</span> <span class="n">ft</span><span class="o">.</span><span class="n">new_finetuned</span><span class="p">(</span>
+    <span class="n">base_model</span><span class="p">,</span>
+    <span class="n">adapt_layers</span><span class="o">=</span><span class="p">{</span><span class="s2">"q_proj"</span><span class="p">,</span> <span class="s2">"v_proj"</span><span class="p">},</span>
+    <span class="n">plain_layers</span><span class="o">=</span><span class="p">{</span><span class="s2">"lm_head"</span><span class="p">,</span> <span class="s2">"out_proj"</span><span class="p">,</span> <span class="s2">"layer_norm"</span><span class="p">}</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>In the above, we</p>
+<ul class="simple">
+<li><p>freeze and quantize all pretrained Embedding and Linear layers in
+<code class="docutils literal notranslate"><span class="pre">base_model</span></code> (excluding <code class="docutils literal notranslate"><span class="pre">lm_head</span></code>, <code class="docutils literal notranslate"><span class="pre">out_proj</span></code> and <code class="docutils literal notranslate"><span class="pre">layer_norm</span></code>)</p></li>
+<li><p>add LoRA adapters to <code class="docutils literal notranslate"><span class="pre">q_proj</span></code> and <code class="docutils literal notranslate"><span class="pre">v_proj</span></code> matrices only</p></li>
+<li><p>freeze all <code class="docutils literal notranslate"><span class="pre">base_model</span></code> parameters, except those in <code class="docutils literal notranslate"><span class="pre">lm_head</span></code>,
+<code class="docutils literal notranslate"><span class="pre">out_proj</span></code> and <code class="docutils literal notranslate"><span class="pre">layer_norm</span></code>.</p></li>
+</ul>
+</section>
+<section id="speicfying-adapter-configurations">
+<h4>Speicfying Adapter Configurations<a class="headerlink" href="#speicfying-adapter-configurations" title="Permalink to this headline">#</a></h4>
+<p>By default, we use a LoRA adapter with a rank of 4 (<code class="docutils literal notranslate"><span class="pre">r=4</span></code>) and a scaling
+factor of <span class="math notranslate nohighlight">\(\alpha / r\)</span>, where <code class="docutils literal notranslate"><span class="pre">alpha=1</span></code>. For Linear adapters, we
+additionally set the dropout layer <code class="docutils literal notranslate"><span class="pre">p=1</span></code>, and use a bias.</p>
+<p>For Embedding adapters, the <code class="docutils literal notranslate"><span class="pre">embedding_config</span></code> argument to <code class="docutils literal notranslate"><span class="pre">new_finetuned</span></code>
+can either be:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">None</span></code>, in which case the following default configuration is used:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">EmbeddingAdapterConfig</span><span class="p">(</span><span class="n">r</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</pre></div>
+</div>
+</li>
+<li><p>A single <code class="docutils literal notranslate"><span class="pre">EmbeddingAdapterConfig</span></code>, which is applied to all Embedding layers
+to adapt.</p></li>
+<li><p>A dictionary of type <code class="docutils literal notranslate"><span class="pre">dict[str,</span> <span class="pre">EmbeddingAdapterConfig]</span></code>, which specifies
+the adapter configuration for <em>each</em> module to adapt. An error is raised if a
+module is left out.</p></li>
+</ul>
+<p>Similarly, for Linear adapters, the <code class="docutils literal notranslate"><span class="pre">linear_config</span></code> argument can also be
+<code class="docutils literal notranslate"><span class="pre">None</span></code>, a single <code class="docutils literal notranslate"><span class="pre">LinearAdapterConfig</span></code>, or a dictionary of type <code class="docutils literal notranslate"><span class="pre">dict[str,</span>
+<span class="pre">LinearAdapterConfig]</span></code>.</p>
+<p>See Section 7.2 of the <a class="reference external" href="https://arxiv.org/pdf/2106.09685.pdf">LoRa paper</a> for
+a discussion of what rank to use. In summary, performance seems to improve
+through <code class="docutils literal notranslate"><span class="pre">r=1</span></code>, <code class="docutils literal notranslate"><span class="pre">r=2</span></code> and plateaus at <code class="docutils literal notranslate"><span class="pre">r=4</span></code> before falling back down at
+<code class="docutils literal notranslate"><span class="pre">r=8</span></code>. Setting the rank to be very high like <code class="docutils literal notranslate"><span class="pre">r=64</span></code> yields no benefit.</p>
+<p>Owing to the size of the layers, a lot of memory and computation can be saved
+for each incremental decrease in <code class="docutils literal notranslate"><span class="pre">r</span></code>.</p>
+</section>
+<section id="more-controls">
+<h4>More Controls<a class="headerlink" href="#more-controls" title="Permalink to this headline">#</a></h4>
+<p>The options described thus far shuold be all you need for most cases. The
+options in this section should not have to be used very often.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">new_finetuned</span></code> function also has two other arguments called
+<code class="docutils literal notranslate"><span class="pre">modules_not_to_freeze</span></code> and <code class="docutils literal notranslate"><span class="pre">modules_not_to_quantize</span></code>.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">plain_layers</span></code> argument is really just for convenience, and inserts its
+contents into both <code class="docutils literal notranslate"><span class="pre">modules_not_to_freeze</span></code> and <code class="docutils literal notranslate"><span class="pre">modules_not_to_quantize</span></code>.
+Using these two arguments however allows you more fine-grained control, such as
+adapting a non-quantized layer.</p>
+<p>Note that for now it is an error to:</p>
+<ol class="arabic simple">
+<li><p>place a module in <code class="docutils literal notranslate"><span class="pre">modules_not_to_quantize</span></code> if it has previously been
+quantized in the base model during a call to <code class="docutils literal notranslate"><span class="pre">quantize_base_model</span></code>.</p></li>
+<li><p>place a module in <code class="docutils literal notranslate"><span class="pre">modules_not_to_freeze</span></code> if it is quantized (directly
+optimising int8 weights is possible, and will be supported in the future)</p></li>
+</ol>
+<p>For completeness, the full signature of the <code class="docutils literal notranslate"><span class="pre">new_finetuned</span></code> function is:</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="finetuna.new_finetuned">
+<span class="sig-prename descclassname"><span class="pre">finetuna.</span></span><span class="sig-name descname"><span class="pre">new_finetuned</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">torch.nn.modules.module.Module</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">adapt_layers</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Optional</span><span class="p"><span class="pre">[</span></span><span class="pre">Set</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">plain_layers</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Set</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">{'lm_head'}</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">embedding_config</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Union</span><span class="p"><span class="pre">[</span></span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">finetuna.main.EmbeddingAdapterConfig</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">finetuna.main.EmbeddingAdapterConfig</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">EmbeddingAdapterConfig(r=4,</span> <span class="pre">alpha=1)</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">linear_config</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Union</span><span class="p"><span class="pre">[</span></span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">finetuna.main.LinearAdapterConfig</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">finetuna.main.LinearAdapterConfig</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">LinearAdapterConfig(r=4,</span> <span class="pre">alpha=1,</span> <span class="pre">dropout=0.0,</span> <span class="pre">bias=True)</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">modules_not_to_quantize</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Set</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">{}</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">modules_not_to_freeze</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Set</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">{}</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">→</span> <span class="sig-return-typehint"><span class="pre">torch.nn.modules.module.Module</span></span></span><a class="headerlink" href="#finetuna.new_finetuned" title="Permalink to this definition">#</a></dt>
+<dd><p>Create a new finetuned model from a pretrained model whose weights will
+be shared.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>model</strong> – base pretrained model. Can be quantized already.</p></li>
+<li><p><strong>target_layers</strong> – the targets onto which to add LoRA adapters. Only Linear
+and Embedding layers are suitable for this. If omitted, all
+suitable layers are adapted.</p></li>
+<li><p><strong>plain_layers</strong> – layers not to quantize or freeze (or LoRA-adapt).</p></li>
+<li><p><strong>embedding_config</strong> – the configuration to use for the added LoRA
+EmbeddingAdapters. Either a single config to apply to all layers, or a
+dict of configs for each embedding layer in target_layers.</p></li>
+<li><p><strong>linear_config</strong> – the configuration to use for the added LoRA
+LinearAdapters. Either a single config to apply to all layers, or a
+dict of configs for each linear layer in target_layers.</p></li>
+<li><p><strong>modules_not_to_quantize</strong> – don’t quantize this layer. Error if already
+quantized in previous quantize_base_model() call.</p></li>
+<li><p><strong>modules_not_to_freeze</strong> – don’t freeze this layer’s weights. Error if
+adapted (i.e. base weights are not frozen, and there is an adaptor)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Raises</dt>
+<dd class="field-even"><p><strong>ValueError</strong> – For not exhaustively specifying the adapter configs when
+    using a dict in either <code class="docutils literal notranslate"><span class="pre">embedding_config</span></code> or <code class="docutils literal notranslate"><span class="pre">linear_config</span></code>.</p>
+</dd>
+</dl>
+</dd></dl>
+</section>
+</section>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="overview_of_optimisations.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Overview of LLM Optimisations</div>
+              </div>
+              <svg><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="index.html">
+              <svg><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Home</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2022
+            </div>
+            Made with 
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            <div class="icons">
+              
+            </div>
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            Contents
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Usage</a><ul>
+<li><a class="reference internal" href="#basic-usage">Basic Usage</a><ul>
+<li><a class="reference internal" href="#loading-a-pre-trained-language-model">1. Loading a Pre-Trained Language Model</a></li>
+<li><a class="reference internal" href="#viewing-adaptable-modules">2. Viewing Adaptable Modules</a></li>
+<li><a class="reference internal" href="#quantizing-the-model">3. Quantizing the Model</a></li>
+<li><a class="reference internal" href="#creating-fine-tuned-models">4. Creating Fine-Tuned models</a><ul>
+<li><a class="reference internal" href="#using-the-adapt-layers-argument">Using the <code class="docutils literal notranslate"><span class="pre">adapt_layers</span></code> argument</a></li>
+<li><a class="reference internal" href="#using-the-plain-layers-argument">Using the <code class="docutils literal notranslate"><span class="pre">plain_layers</span></code> argument</a></li>
+<li><a class="reference internal" href="#speicfying-adapter-configurations">Speicfying Adapter Configurations</a></li>
+<li><a class="reference internal" href="#more-controls">More Controls</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script data-url_root="./" id="documentation_options" src="_static/documentation_options.js"></script>
+    <script src="_static/jquery.js"></script>
+    <script src="_static/underscore.js"></script>
+    <script src="_static/doctools.js"></script>
+    <script src="_static/scripts/furo.js"></script>
+    <script src="_static/clipboard.min.js"></script>
+    <script src="_static/copybutton.js"></script>
+    <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    </body>
+</html>
