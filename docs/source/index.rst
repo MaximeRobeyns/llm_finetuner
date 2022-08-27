@@ -1,20 +1,35 @@
 ``finetuna`` Documentation
 ==========================
 
-Fine Tuning LLMs in Memory Constrained Environments
----------------------------------------------------
+**Fine-tune multiple LLMs in resource-constrained environments.**
 
-This is a small wrapper library which applies optimisations to large pretrained
+Introduction
+------------
+
+This is a library to fine-tune large langague models in resource-constrained
+environments.
+
+This works by freezing the large pretrained model weights, and quantizing them
+to 8 bits to save memory. Low-rank adapters are then added to certain network
+modules and only these are optimised.
+
+Once fine-tuned, you can export this quantized and adapted model to the same
+format as the original pretrained model weights (in either ``float16`` or
+``float32``).
+
+The approach taken allows you to hold multiple fine-tuned LLMs in memory using
+only marginally more memory than it would cost to hold a single pretrained model
+in memory. This is useful when writing probabilistic programs or 'cascades' with
 language models.
-
-These optimisations allow the user to hold multiple fine-tuned LLMs in memory
-using only marginally more memory than it would cost to hold a single pretrained
-model in memory.
 
 The two optimisations used are:
 
 - `8-bit quantization <https://arxiv.org/pdf/2110.02861.pdf>`_ of pre-trained model weights, and
 - fine-tuning with `LoRA adapters <https://arxiv.org/pdf/2106.09685.pdf>`_.
+
+You can find a high-level description of the optimisations on the `overview page
+<overview_of_optimisations.html>`_.
+
 
 Installation
 ------------
@@ -30,7 +45,9 @@ Clone the repository, navigate to root, and do
 
     make install
 
-To install dependencies for
+If you run into issues, see our `troubleshooting <troubleshooting.html>`_ guide.
+
+For development, to install dependencies for
 
 - tests, run ``pip install -e .[test]``
 - documentation, run ``pip install -e .[docs]``
@@ -84,6 +101,7 @@ Contents
 
    usage
    overview_of_optimisations
+   troubleshooting
 
 ..
    fine_tuning

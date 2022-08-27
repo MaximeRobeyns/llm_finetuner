@@ -619,32 +619,6 @@ def new_finetuned(
     """Create a new finetuned model from a pretrained model whose weights will
     be shared.
 
-    Layers can either be:
-    - quantized to 8-bits or not
-    and
-    - frozen, not-frozen or adapted
-
-    This gives 6 combinations. By default, we want to quantize everything we
-    can, and add adapters to everything. However, when deviating from this
-    default, there are two main types of layers we care about when fine-tuning:
-
-    1. The first are layers we want to add LoRA adapters to, such as
-    query and value projection matrices in the attention module. That is, the
-    pretrained weights are quantized and frozen, and we train low-rank, FP32
-    'adapters'. You can choose which layers we treat like this by naming them
-    in the ``adapt_layers`` argument,
-
-    2. The second are layers that we just want to leave alone, such as the
-    language model head. By 'leave alone', we mean that these are vanilla NN
-    layers: not quantized and not-frozen (nor adapted). You can list the layers
-    to treat as such in the ``plain_layers`` argument. These cannot intersect
-    with ``adapt_layers``.
-
-    To give full control over what happens to each layer, we also provide the
-    modules_not_to_freeze and modules_not_to_quantize arguments.
-
-    See README for more info.
-
     Args:
         model: base pretrained model. Can be quantized already.
         target_layers: the targets onto which to add LoRA adapters. Only Linear
@@ -657,12 +631,11 @@ def new_finetuned(
         linear_config: the configuration to use for the added LoRA
             LinearAdapters. Either a single config to apply to all layers, or a
             dict of configs for each linear layer in target_layers.
+
         modules_not_to_quantize: don't quantize this layer. Error if already
             quantized in previous quantize_base_model() call.
-            WARNING: not thorouoghly tested.
         modules_not_to_freeze: don't freeze this layer's weights. Error if
             adapted (i.e. base weights are not frozen, and there is an adaptor)
-            WARNING: not thorouoghly tested.
 
     Raises:
         ValueError: For not exhaustively specifying the adapter configs when
