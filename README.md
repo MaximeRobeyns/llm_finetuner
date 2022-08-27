@@ -79,5 +79,5 @@ model_2.load_state_dict("/save/path_finetuned.pt", strict=False)
 ## Usage
 
 Please see the [usage
-guide](https://maximerobeyns.github.io/llm_finetuner/troubleshooting.html) in
+guide](https://maximerobeyns.github.io/llm_finetuner/usage.html) in
 the documentation for usage instructions.
