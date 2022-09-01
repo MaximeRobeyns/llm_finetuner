@@ -30,8 +30,8 @@ with warnings.catch_warnings():
     warnings.simplefilter("ignore")
     with contextlib.redirect_stdout(io.StringIO()):
         from bitsandbytes.functional import quantize_blockwise, dequantize_blockwise
-        from bitsandbytes.nn import Linear8bitLt, StableEmbedding
 
+# from bitsandbytes.nn import Linear8bitLt, StableEmbedding
 # from bitsandbytes.nn.modules import Linear8bitLt, StableEmbedding, Int8Params
 
 
@@ -48,14 +48,15 @@ def _is_quantized(model: nn.Module) -> bool:
 
 
 def _get_ft_mod_device(mod: FTModule) -> t.device:
+    # Check the provided module for the buffer's device, or the parameter
+    # device, or, failing that, return the generic "cuda" device.
     try:
         if isinstance(mod, QuantizedModule):
             return next(mod.buffers()).device
         else:
             return next(mod.parameters()).device
     except:
-        # TODO: fix this correctly
-        return "cuda"
+        return t.device("cuda")
 
 
 def get_model_mem_consumption(model) -> int:
@@ -178,11 +179,30 @@ class FTModule(nn.Module):
 class QuantizedModule(FTModule):
     def __init__(
         self,
+        quant_weight: t.ByteTensor,
+        absmax: t.FloatTensor,
+        code: t.IntTensor,
         **kwargs,
     ):
-        """A frozen, 8-bit quantized module which accomodates LoRA adapters."""
+        """A frozen, 8-bit quantized module which accomodates LoRA adapters.
+
+        Args:
+            weight: the blockwise-quantized 8-bit weights from the underlying
+                module.
+            absmax: the maximum block values of the weight tensor
+            code: the quantization map
+        """
         # Through MRO, this resolves to either FTLinear or FTEmbedding constructors.
         super(QuantizedModule, self).__init__(**kwargs)
+
+        self.register_buffer("quant_weight", quant_weight.requires_grad_(False))
+        self.register_buffer("quant_absmax", absmax.requires_grad_(False))
+        self.register_buffer("quant_code", code.requires_grad_(False))
+
+    def dequantize_weight(self) -> t.Tensor:
+        return dequantize_blockwise(
+            self.quant_weight, absmax=self.quant_absmax, code=self.quant_code
+        )
 
 
 # Layers ======================================================================
@@ -213,12 +233,12 @@ class FTLinear(FTModule):
     def _forward(self, x: t.Tensor, **_) -> t.Tensor:
         return F.linear(x, self.weight, self.bias)
 
-    # def requires_grad_(self, requires_grad: bool = True) -> None:
-    #     if "weight" in self._parameters.keys():
-    #         self._parameters["weight"].requires_grad_(requires_grad)
-    #     # if "bias" in self._parameters.keys():
-    #     if self.bias is not None:
-    #         self._parameters["bias"].requires_grad_(requires_grad)
+    def requires_grad_(self, requires_grad: bool = True) -> None:
+        pdict = self._parameters
+        if "weight" in pdict and isinstance(pdict["weight"], nn.Parameter):
+            pdict["weight"].requires_grad_(requires_grad)
+        if "bias" in pdict and isinstance(pdict["bias"], nn.Parameter):
+            pdict["bias"].requires_grad_(requires_grad)
 
     @classmethod
     def from_linear(cls, linear: nn.Linear) -> FTLinear:
@@ -237,39 +257,17 @@ class FTLinear(FTModule):
 class QuantizedLinear(QuantizedModule, FTLinear):
     def __init__(
         self,
-        weight: nn.Parameter,
+        weight: t.ByteTensor,
+        absmax: t.FloatTensor,
+        code: t.IntTensor,
         bias: Optional[nn.Parameter] = None,
-        has_fp16_weights: bool = True,
     ):
-        """
-        Args:
-            has_fp16_weights: set to True if you want to train this quantized
-                layer, or False otherwise (i.e. if it will be frozen / have a
-                LoRA adapter).
-        """
         super(QuantizedLinear, self).__init__(
-            weight=weight, bias=bias, save_weight=False
+            weight, absmax, code, weight=weight, bias=bias, save_weight=False
         )
-        self._qlinear = Linear8bitLt(
-            self.in_features,
-            self.out_features,
-            bias=bias is not None,
-            threshold=6.0,
-            has_fp16_weights=has_fp16_weights,
-        )
-        self._qlinear.load_state_dict(
-            {"weight": weight.requires_grad_(False)}, strict=False
-        )
-        if bias is not None:
-            self._qlinear.load_state_dict(
-                {"bias": bias.requires_grad_(False)}, strict=False
-            )
-        self._qlinear = self._qlinear.cuda().half()
 
     def _forward(self, x: t.Tensor, **_) -> t.Tensor:
-        output = self._qlinear(x.half())
-        output = output.float()
-        return output
+        return F.linear(x, self.dequantize_weight(), self.bias)
 
     @classmethod
     def from_linear(
@@ -278,7 +276,8 @@ class QuantizedLinear(QuantizedModule, FTLinear):
         """Converts a PyTorch nn.Linear (or FTLinear) module to a quantized
         8-bit linear layer with optionally frozen body parameters, which can
         accomodate a LoRA adapter"""
-        return cls(linear.weight, linear.bias, has_fp16_weights)
+        int8_weight, state = quantize_blockwise_lowmem(linear.weight)
+        return cls(int8_weight, *state, bias=linear.bias)
 
 
 # Embedding Layers ------------------------------------------------------------
@@ -312,16 +311,14 @@ class FTEmbedding(FTModule):
 
 
 class QuantizedEmbedding(QuantizedModule, FTEmbedding):
-    def __init__(self, weight: nn.Parameter):
-        super(QuantizedEmbedding, self).__init__(weight=weight, save_weight=False)
-        self._qembedding = StableEmbedding(self.num_embeddings, self.embedding_dim)
-        self._qembedding.load_state_dict({"weight": weight})
+    def __init__(self, weight: t.ByteTensor, absmax: t.FloatTensor, code: t.IntTensor):
+        super(QuantizedEmbedding, self).__init__(
+            weight, absmax, code, weight=weight, save_weight=False
+        )
 
     def _forward(self, x: t.Tensor, **kwargs) -> t.Tensor:
-        # See FTEmbedding for note on requires_grad.
-        qembed = self._qembedding(x, **kwargs).requires_grad_(True).float()
-        assert not t.any(qembed.isnan()), "nans in embedding"
-        return qembed
+        # See FTEmbedding for note on requires_grad
+        return F.embedding(x, self.dequantize_weight(), **kwargs).requires_grad_(True)
 
     @classmethod
     def from_embedding(
@@ -329,7 +326,8 @@ class QuantizedEmbedding(QuantizedModule, FTEmbedding):
     ) -> QuantizedEmbedding:
         """Converts a PyTorch nn.Embedding module to a quantized 8-bit version
         with optionally frozen weights and an optional adapter."""
-        return cls(embedding.weight)
+        weights_int8, state = quantize_blockwise_lowmem(embedding.weight)
+        return cls(weights_int8, *state)
 
 
 # LearnedPositionalEmbedding --------------------------------------------------
@@ -380,15 +378,7 @@ class QuantizedLearnedPositionalEmbedding(
 ):
     def __init__(self, weight: t.ByteTensor, absmax: t.FloatTensor, code: t.IntTensor):
         super(QuantizedLearnedPositionalEmbedding, self).__init__(
-            weight=weight, save_weight=False
-        )
-        self.register_buffer("quant_weight", weight.requires_grad_(False))
-        self.register_buffer("quant_absmax", absmax.requires_grad_(False))
-        self.register_buffer("quant_code", code.requires_grad_(False))
-
-    def dequantize_weight(self) -> t.Tensor:
-        return dequantize_blockwise(
-            self.quant_weight, absmax=self.quant_absmax, code=self.quant_code
+            weight, absmax, code, weight=weight, save_weight=False
         )
 
     def forward(
