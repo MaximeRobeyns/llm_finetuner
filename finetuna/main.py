@@ -48,10 +48,14 @@ def _is_quantized(model: nn.Module) -> bool:
 
 
 def _get_ft_mod_device(mod: FTModule) -> t.device:
-    if isinstance(mod, QuantizedModule):
-        return next(mod.buffers()).device
-    else:
-        return next(mod.parameters()).device
+    try:
+        if isinstance(mod, QuantizedModule):
+            return next(mod.buffers()).device
+        else:
+            return next(mod.parameters()).device
+    except:
+        # TODO: fix this correctly
+        return "cuda"
 
 
 def get_model_mem_consumption(model) -> int:

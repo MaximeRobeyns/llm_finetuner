@@ -11,12 +11,12 @@ Basic Usage
 
 The procedure for using this library involves:
 
-1. Loading a pre-trained language model
-2. deciding which modules in your model you'd like to quantize to 8 bit (note,
+1. Loading a pre-trained language model,
+2. Deciding which modules in your model to quantize to ``int8`` (note,
    only ``nn.Linear`` and ``nn.Embedding`` modules can be quantized at the
-   moment.).
-3. optionally, explicitly quantizing the pretrained model to save memory
-4. creating one or more fine-tuned models
+   moment.),
+3. (Optional) Explicitly quantizing the pretrained model to save memory,
+4. Creating one or more fine-tuned models.
 
 1. Loading a Pre-Trained Language Model
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
