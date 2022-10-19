@@ -70,7 +70,7 @@ other ``nn.Module``), and wrap it with ``finetuna.new_finetuned(my_model)``.
    model_name = "EleutherAI/gpt-j-6B"
    base_model = transformers.AutoModelForCausalLM.from_pretrained(model_name)
 
-   # Wrap it (you can do this more than once)
+   # Wrap it (you can call new_finetuned on the same base_model more than once)
    finetuned = ft.new_finetuned(base_model)
 
    # Setup an optimiser *from the bitsandbytes library*

@@ -10,7 +10,7 @@
   
 <meta property="og:url" content="usage.html" />
   
-<meta property="og:description" content="Basic Usage: The procedure for using this library involves: Loading a pre-trained language model, deciding which modules in your model you’d like to quantize to 8 bit (note, only nn.Linear and nn.E..." />
+<meta property="og:description" content="Basic Usage: The procedure for using this library involves: Loading a pre-trained language model,, Deciding which modules in your model to quantize to int8(note, only nn.Linear and nn.Embedding mod..." />
   <link rel="index" title="Index" href="genindex.html" /><link rel="search" title="Search" href="search.html" /><link rel="next" title="Overview of LLM Optimisations" href="overview_of_optimisations.html" /><link rel="prev" title="finetuna Documentation" href="index.html" />
 
     <meta name="generator" content="sphinx-4.5.0, furo 2022.04.07"/>
@@ -209,15 +209,19 @@
 <h2>Basic Usage<a class="headerlink" href="#basic-usage" title="Permalink to this headline">#</a></h2>
 <p>The procedure for using this library involves:</p>
 <ol class="arabic simple">
-<li><p>Loading a pre-trained language model</p></li>
-<li><p>deciding which modules in your model you’d like to quantize to 8 bit (note,
+<li><p>Loading a pre-trained language model,</p></li>
+<li><p>Deciding which modules in your model to quantize to <code class="docutils literal notranslate"><span class="pre">int8</span></code> (note,
 only <code class="docutils literal notranslate"><span class="pre">nn.Linear</span></code> and <code class="docutils literal notranslate"><span class="pre">nn.Embedding</span></code> modules can be quantized at the
-moment.).</p></li>
-<li><p>optionally, explicitly quantizing the pretrained model to save memory</p></li>
-<li><p>creating one or more fine-tuned models</p></li>
+moment.),</p></li>
+<li><p>(Optional) Explicitly quantizing the pretrained model to save memory,</p></li>
+<li><p>Creating one or more fine-tuned models.</p></li>
 </ol>
 <section id="loading-a-pre-trained-language-model">
 <h3>1. Loading a Pre-Trained Language Model<a class="headerlink" href="#loading-a-pre-trained-language-model" title="Permalink to this headline">#</a></h3>
+<p>All we require at this point is a <code class="docutils literal notranslate"><span class="pre">nn.Module</span></code> that we can use in subsequent
+steps. While finetuna is intended for use with language models, this doesn’t
+preclude it’s use with other types of mdoels since it can adapt any model’s
+<code class="docutils literal notranslate"><span class="pre">nn.Linear</span></code> or <code class="docutils literal notranslate"><span class="pre">nn.Embedding</span></code> layers.</p>
 <p>This follows the standard procedure for loading models from e.g. HuggingFace.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">transformers</span>
 
@@ -264,14 +268,14 @@ pretrained model weights to int8 using the quantization scheme described in
 <p>This is an optional step and will be done automatically when creating new
 finetuned models in the next step if <code class="docutils literal notranslate"><span class="pre">base_model</span></code> is not yet quantized.</p>
 <p>If however you have memory constraints that mean that you can’t keep a full
-model loaded into memory, then use <code class="docutils literal notranslate"><span class="pre">quantize_base_model(base_model)</span></code> to
+model loaded into memory, then use <code class="docutils literal notranslate"><span class="pre">prepare_base_model(base_model)</span></code> to
 convert all the <code class="docutils literal notranslate"><span class="pre">nn.Linear</span></code> and <code class="docutils literal notranslate"><span class="pre">nn.Embedding</span></code> layers to 8bit:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ft</span><span class="o">.</span><span class="n">quantize_base_model</span><span class="p">(</span><span class="n">base_model</span><span class="p">)</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ft</span><span class="o">.</span><span class="n">prepare_base_model</span><span class="p">(</span><span class="n">base_model</span><span class="p">)</span>
 </pre></div>
 </div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>The <code class="docutils literal notranslate"><span class="pre">quantize_base_model</span></code> function will modify the <code class="docutils literal notranslate"><span class="pre">base_model</span></code>
+<p>The <code class="docutils literal notranslate"><span class="pre">prepare_base_model</span></code> function will modify the <code class="docutils literal notranslate"><span class="pre">base_model</span></code>
 in-place, although it returns a reference to it for convenience.</p>
 </div>
 <p>This function also accepts an additional <code class="docutils literal notranslate"><span class="pre">modules_not_to_freeze</span></code> argument:
@@ -280,11 +284,11 @@ this set. By default, this is set to <code class="docutils literal notranslate">
 <code class="docutils literal notranslate"><span class="pre">GPT-</span></code> and <code class="docutils literal notranslate"><span class="pre">OPT-</span></code> models in HuggingFace), since we often want to retain full
 precision for the language model head.</p>
 <p>If you <em>do</em> want to quantize the language modelling head, you can set this to
-teh empty set:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ft</span><span class="o">.</span><span class="n">quantize_base_model</span><span class="p">(</span><span class="n">base_model</span><span class="p">,</span> <span class="n">modules_not_to_quantize</span><span class="o">=</span><span class="nb">set</span><span class="p">())</span>
+the empty set:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ft</span><span class="o">.</span><span class="n">prepare_base_model</span><span class="p">(</span><span class="n">base_model</span><span class="p">,</span> <span class="n">modules_not_to_quantize</span><span class="o">=</span><span class="nb">set</span><span class="p">())</span>
 </pre></div>
 </div>
-<p>Also note that if you quantize a module in the <code class="docutils literal notranslate"><span class="pre">quantize_base_model</span></code> function,
+<p>Also note that if you quantize a module in the <code class="docutils literal notranslate"><span class="pre">prepare_base_model</span></code> function,
 subsequently requiring that this module is no longer quantized when calling
 <code class="docutils literal notranslate"><span class="pre">new_finetuned</span></code> will result in an error. Later versions of <code class="docutils literal notranslate"><span class="pre">finetuna</span></code>
 may support this, but the loss of accuracy owing to the round-trip from
@@ -399,14 +403,14 @@ adapting a non-quantized layer.</p>
 <p>Note that for now it is an error to:</p>
 <ol class="arabic simple">
 <li><p>place a module in <code class="docutils literal notranslate"><span class="pre">modules_not_to_quantize</span></code> if it has previously been
-quantized in the base model during a call to <code class="docutils literal notranslate"><span class="pre">quantize_base_model</span></code>.</p></li>
+quantized in the base model during a call to <code class="docutils literal notranslate"><span class="pre">prepare_base_model</span></code>.</p></li>
 <li><p>place a module in <code class="docutils literal notranslate"><span class="pre">modules_not_to_freeze</span></code> if it is quantized (directly
 optimising int8 weights is possible, and will be supported in the future)</p></li>
 </ol>
 <p>For completeness, the full signature of the <code class="docutils literal notranslate"><span class="pre">new_finetuned</span></code> function is:</p>
 <dl class="py function">
 <dt class="sig sig-object py" id="finetuna.new_finetuned">
-<span class="sig-prename descclassname"><span class="pre">finetuna.</span></span><span class="sig-name descname"><span class="pre">new_finetuned</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">torch.nn.modules.module.Module</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">adapt_layers</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Optional</span><span class="p"><span class="pre">[</span></span><span class="pre">Set</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">plain_layers</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Set</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">{'lm_head'}</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">embedding_config</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Union</span><span class="p"><span class="pre">[</span></span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">finetuna.main.EmbeddingAdapterConfig</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">finetuna.main.EmbeddingAdapterConfig</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">EmbeddingAdapterConfig(r=4,</span> <span class="pre">alpha=1)</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">linear_config</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Union</span><span class="p"><span class="pre">[</span></span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">finetuna.main.LinearAdapterConfig</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">finetuna.main.LinearAdapterConfig</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">LinearAdapterConfig(r=4,</span> <span class="pre">alpha=1,</span> <span class="pre">dropout=0.0,</span> <span class="pre">bias=True)</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">modules_not_to_quantize</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Set</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">{}</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">modules_not_to_freeze</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Set</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">{}</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">→</span> <span class="sig-return-typehint"><span class="pre">torch.nn.modules.module.Module</span></span></span><a class="headerlink" href="#finetuna.new_finetuned" title="Permalink to this definition">#</a></dt>
+<span class="sig-prename descclassname"><span class="pre">finetuna.</span></span><span class="sig-name descname"><span class="pre">new_finetuned</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">torch.nn.modules.module.Module</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">adapt_layers</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Optional</span><span class="p"><span class="pre">[</span></span><span class="pre">Set</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">plain_layers</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Set</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">{'lm_head'}</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">embedding_config</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Union</span><span class="p"><span class="pre">[</span></span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">finetuna.main.EmbeddingAdapterConfig</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">finetuna.main.EmbeddingAdapterConfig</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">EmbeddingAdapterConfig(r=4,</span> <span class="pre">alpha=1)</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">linear_config</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Union</span><span class="p"><span class="pre">[</span></span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">finetuna.main.LinearAdapterConfig</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">finetuna.main.LinearAdapterConfig</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">LinearAdapterConfig(r=4,</span> <span class="pre">alpha=1,</span> <span class="pre">dropout=0.0,</span> <span class="pre">bias=True)</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">modules_not_to_quantize</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Set</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">{}</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">modules_not_to_freeze</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Set</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">{}</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">do_not_quantize</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">→</span> <span class="sig-return-typehint"><span class="pre">torch.nn.modules.module.Module</span></span></span><a class="headerlink" href="#finetuna.new_finetuned" title="Permalink to this definition">#</a></dt>
 <dd><p>Create a new finetuned model from a pretrained model whose weights will
 be shared.</p>
 <dl class="field-list simple">
@@ -424,9 +428,10 @@ dict of configs for each embedding layer in target_layers.</p></li>
 LinearAdapters. Either a single config to apply to all layers, or a
 dict of configs for each linear layer in target_layers.</p></li>
 <li><p><strong>modules_not_to_quantize</strong> – don’t quantize this layer. Error if already
-quantized in previous quantize_base_model() call.</p></li>
+quantized in previous prepare_base_model() call.</p></li>
 <li><p><strong>modules_not_to_freeze</strong> – don’t freeze this layer’s weights. Error if
 adapted (i.e. base weights are not frozen, and there is an adaptor)</p></li>
+<li><p><strong>do_not_quantize</strong> – a switch to turn off quantization entirely</p></li>
 </ul>
 </dd>
 <dt class="field-even">Raises</dt>

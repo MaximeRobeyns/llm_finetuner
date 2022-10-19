@@ -257,7 +257,7 @@ other <code class="docutils literal notranslate"><span class="pre">nn.Module</sp
 <span class="n">model_name</span> <span class="o">=</span> <span class="s2">"EleutherAI/gpt-j-6B"</span>
 <span class="n">base_model</span> <span class="o">=</span> <span class="n">transformers</span><span class="o">.</span><span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_name</span><span class="p">)</span>
 
-<span class="c1"># Wrap it (you can do this more than once)</span>
+<span class="c1"># Wrap it (you can call new_finetuned on the same base_model more than once)</span>
 <span class="n">finetuned</span> <span class="o">=</span> <span class="n">ft</span><span class="o">.</span><span class="n">new_finetuned</span><span class="p">(</span><span class="n">base_model</span><span class="p">)</span>
 
 <span class="c1"># Setup an optimiser *from the bitsandbytes library*</span>
