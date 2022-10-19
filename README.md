@@ -34,7 +34,7 @@ model_name = 'facebook/opt-125m'
 base_model = transformers.AutoModelForCausalLM.from_pretrained(model_name)
 
 # If memory constraints require it, you can manually pre-quantize a model:
-ft.quantize_base_model(base_model)
+ft.prepare_base_model(base_model)
 
 # Create new finetuned models using either the base or quantized model
 model_1 = ft.new_finetuned(base_model)

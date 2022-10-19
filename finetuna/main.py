@@ -38,9 +38,9 @@ with warnings.catch_warnings():
 # Utility functions -----------------------------------------------------------
 
 
-def _is_quantized(model: nn.Module) -> bool:
+def _is_prepared(model: nn.Module) -> bool:
     try:
-        q = model._is_quantized.item()
+        q = model._is_prepared.item()
         assert isinstance(q, bool)
         return q
     except AttributeError:
@@ -476,7 +476,7 @@ def get_lora_adaptable_modules(
     """Returns a set of module names from the provided list of types onto which
     you can add LoRA adapters."""
 
-    if not _is_quantized(model) and target_modules == [FTModule]:
+    if not _is_prepared(model) and target_modules == [FTModule]:
         raise RuntimeWarning(
             "WARNING: model not yet quantized."
             "Results likely to be incorrect. Please speicfy target_modules manually."
@@ -490,8 +490,10 @@ def get_lora_adaptable_modules(
     return module_names
 
 
-def quantize_base_model(
-    model: nn.Module, modules_not_to_quantize: Set[str] = {"lm_head"}
+def prepare_base_model(
+    model: nn.Module,
+    modules_not_to_quantize: Set[str] = {"lm_head"},
+    do_not_quantize: bool = False,
 ) -> nn.Module:
     """This function is used to quantize a large pretrained model.
 
@@ -509,6 +511,7 @@ def quantize_base_model(
     Args:
         model: the model to quantize.
         modules_not_to_quantize: a list of all the module names not to quantize.
+        do_not_quantize: an override to disable quantization for all modules
 
     Returns:
         nn.Module: the updated model (it is updated in place, but having this
@@ -518,18 +521,18 @@ def quantize_base_model(
         RuntimeError: if attempting to re-quantize an already quantized model.
     """
 
-    if _is_quantized(model):
+    if _is_prepared(model):
         raise RuntimeError("Attempt to re-quantize an already quantized model")
 
     for name, mod in model.named_children():
 
         # Recurse:
         if len(list(mod.children())) > 0:
-            quantize_base_model(mod, modules_not_to_quantize)
+            prepare_base_model(mod, modules_not_to_quantize)
 
         # Replace modules:
         if isinstance(mod, nn.Linear):
-            if name in modules_not_to_quantize:
+            if name in modules_not_to_quantize or do_not_quantize:
                 model._modules[name] = FTLinear.from_linear(mod)
             else:
                 model._modules[name] = QuantizedLinear.from_linear(mod)
@@ -538,7 +541,7 @@ def quantize_base_model(
             # For OPT, the learned positional embedding works differently to
             # the vanilla Embedding, so we need a special class for this:
             assert isinstance(mod, nn.Embedding)
-            if name in modules_not_to_quantize:
+            if name in modules_not_to_quantize or do_not_quantize:
                 model._modules[name] = FTLearnedPositionalEmbedding.from_base(mod)
             else:
                 model._modules[name] = QuantizedLearnedPositionalEmbedding.from_base(
@@ -546,7 +549,7 @@ def quantize_base_model(
                 )
 
         elif isinstance(mod, nn.Embedding):
-            if name in modules_not_to_quantize:
+            if name in modules_not_to_quantize or do_not_quantize:
                 model._modules[name] = FTEmbedding.from_embedding(mod)
             else:
                 model._modules[name] = QuantizedEmbedding.from_embedding(mod)
@@ -554,7 +557,7 @@ def quantize_base_model(
             # For any other module in the pretrained model, freeze weights.
             model._modules[name] = model._modules[name].requires_grad_(False)
 
-    model.register_buffer("_is_quantized", t.tensor([True]))
+    model.register_buffer("_is_prepared", t.tensor([True]))
 
     return model
 
@@ -565,6 +568,7 @@ def _validate_new_ft_args(
     plain_layers: Set[str],
     modules_not_to_freeze: Set[str],
     modules_not_to_quantize: Set[str],
+    do_not_quantize: bool,
 ) -> Tuple[Set[str], Set[str]]:
     """Validates args for new_finetuned.
     Note, sets are passed by reference."""
@@ -573,7 +577,7 @@ def _validate_new_ft_args(
 
     if adapt_layers is None:
         # TODO: write tests to ensure that these are the same in both cases
-        if _is_quantized(model):
+        if _is_prepared(model):
             adapt_layers = get_lora_adaptable_modules(model)
         else:
             adapt_layers = get_lora_adaptable_modules(
@@ -590,7 +594,10 @@ def _validate_new_ft_args(
         modules_not_to_freeze.add(m)
         modules_not_to_quantize.add(m)
 
-    quantized_modules = adapt_layers - modules_not_to_quantize
+    if do_not_quantize:
+        quantized_modules = set()
+    else:
+        quantized_modules = adapt_layers - modules_not_to_quantize
 
     for m in modules_not_to_freeze:
         if m in adapt_layers:
@@ -609,6 +616,7 @@ def new_finetuned(
     # fmt: on
     modules_not_to_quantize: Set[str] = set(),
     modules_not_to_freeze: Set[str] = set(),
+    do_not_quantize: bool = False,
 ) -> nn.Module:
     """Create a new finetuned model from a pretrained model whose weights will
     be shared.
@@ -627,9 +635,10 @@ def new_finetuned(
             dict of configs for each linear layer in target_layers.
 
         modules_not_to_quantize: don't quantize this layer. Error if already
-            quantized in previous quantize_base_model() call.
+            quantized in previous prepare_base_model() call.
         modules_not_to_freeze: don't freeze this layer's weights. Error if
             adapted (i.e. base weights are not frozen, and there is an adaptor)
+        do_not_quantize: a switch to turn off quantization entirely
 
     Raises:
         ValueError: For not exhaustively specifying the adapter configs when
@@ -642,17 +651,18 @@ def new_finetuned(
         plain_layers,
         modules_not_to_freeze,
         modules_not_to_quantize,
+        do_not_quantize,
     )
 
-    if not _is_quantized(model):
-        # Here, we run quantize_base_model but with modules_not_to_quantize set
+    if not _is_prepared(model):
+        # Here, we run prepare_base_model but with modules_not_to_quantize set
         # to everything, thus allowing us to place LoRA adapters on all
         # compatible layers.
 
         mntq = get_lora_adaptable_modules(
             model, target_modules=[nn.Linear, nn.Embedding]
         )
-        quantize_base_model(model, mntq)
+        prepare_base_model(model, mntq, do_not_quantize)
 
     new_model = copy_mod(model)
 

@@ -49,13 +49,13 @@ def test_copy_mod():
 
 def test__is_quantized():
     net = _TestNet()
-    assert not ft.main._is_quantized(net)
+    assert not ft.main._is_prepared(net)
 
 
 def test_quantize_base():
     net = _TestNet()
     modules_not_to_quantize = {"fc2", "lm_head"}
-    ft.quantize_base_model(net, modules_not_to_quantize)
+    ft.prepare_base_model(net, modules_not_to_quantize)
     comparison = _TestNet()
 
     # for n, m in comparison.named_modules():
@@ -69,7 +69,6 @@ def test_quantize_base():
                     # This module is not quantized by default
                     assert type(net._modules[n]) == ft.FTLinear
                 else:
-                    print(f"doing {m} in {mod} in {net}")
                     assert type(net._modules[n]) == ft.QuantizedLinear
 
             elif isinstance(m, nn.Embedding):
@@ -94,6 +93,24 @@ def test_quantize_base():
                 assert not isinstance(net._modules[n], ft.FTModule)
 
 
+def test_do_not_quantize_base():
+    net = _TestNet()
+    modules_not_to_quantize = {"fc2", "lm_head"}
+    ft.prepare_base_model(net, modules_not_to_quantize, do_not_quantize=True)
+
+    for mod in list(net.modules()):
+        for n, child in mod.named_children():
+            assert not isinstance(child, ft.QuantizedModule)
+            if isinstance(child, nn.Linear):
+                assert isinstance(net._modules[n], ft.FTLinear)
+            elif isinstance(child, nn.Embedding):
+                assert isinstance(net._modules[n], ft.FTEmbedding)
+            elif "LearnedPositionalEmbedding" in str(type(child)):
+                assert type(net._modules[n]) == ft.FTLearnedPositionalEmbedding
+            # else:
+            #     assert not isinstance(net._modules[n], ft.FTModule)
+
+
 def test_get_adaptable():
     # attempt get_adaptable for non-initialised model should raise exception
     net = _TestNet()
@@ -111,7 +128,7 @@ def test_get_adaptable():
     with pytest.raises(RuntimeWarning):
         ft.get_lora_adaptable_modules(net)
 
-    ft.quantize_base_model(net)
+    ft.prepare_base_model(net)
 
     # these are the nn.Linear and nn.Embedding modules in net.
     ref = {"em1", "fc1", "fc2", "lm_head"}
@@ -341,12 +358,16 @@ def test_validate_ft_args():
 
     # unquantized model
     net = _TestNet()
-    n_adapt_layers, _ = ft.main._validate_new_ft_args(net, None, set(), set(), set())
+    n_adapt_layers, _ = ft.main._validate_new_ft_args(
+        net, None, set(), set(), set(), False
+    )
     assert n_adapt_layers == adaptable_layers
 
     # quantized model
-    ft.quantize_base_model(net, set())
-    n_adapt_layers, _ = ft.main._validate_new_ft_args(net, None, set(), set(), set())
+    ft.prepare_base_model(net, set())
+    n_adapt_layers, _ = ft.main._validate_new_ft_args(
+        net, None, set(), set(), set(), False
+    )
     assert n_adapt_layers == adaptable_layers
 
     # defaults for unquantized net
@@ -355,8 +376,14 @@ def test_validate_ft_args():
     plain_layers = {"lm_head"}
     modules_not_to_quantize = set()
     modules_not_to_freeze = set()
+    do_not_quantize = False
     n_adapt_layers, quantized_modules = ft.main._validate_new_ft_args(
-        net, adapt_layers, plain_layers, modules_not_to_quantize, modules_not_to_freeze
+        net,
+        adapt_layers,
+        plain_layers,
+        modules_not_to_quantize,
+        modules_not_to_freeze,
+        do_not_quantize,
     )
     assert n_adapt_layers == {"em1", "fc1", "fc2"}
     assert quantized_modules == {"em1", "fc1", "fc2"}
@@ -365,13 +392,19 @@ def test_validate_ft_args():
 
     # defaults for quantized net
     net = _TestNet()
-    ft.quantize_base_model(net)
+    ft.prepare_base_model(net)
     adapt_layers = None
     plain_layers = {"lm_head"}
     modules_not_to_quantize = set()
     modules_not_to_freeze = set()
+    do_not_quantize = False
     n_adapt_layers, quantized_modules = ft.main._validate_new_ft_args(
-        net, adapt_layers, plain_layers, modules_not_to_quantize, modules_not_to_freeze
+        net,
+        adapt_layers,
+        plain_layers,
+        modules_not_to_quantize,
+        modules_not_to_freeze,
+        do_not_quantize,
     )
     assert n_adapt_layers == {"em1", "fc1", "fc2"}
     assert quantized_modules == {"em1", "fc1", "fc2"}
@@ -387,8 +420,14 @@ def test_validate_ft_args():
     plain_layers = {"lm_head"}
     modules_not_to_quantize = {"em1"}  # don't adapt this, but also don't quantize this
     modules_not_to_freeze = set()
+    do_not_quantize = False
     n_adapt_layers, quantized_modules = ft.main._validate_new_ft_args(
-        net, adapt_layers, plain_layers, modules_not_to_quantize, modules_not_to_freeze
+        net,
+        adapt_layers,
+        plain_layers,
+        modules_not_to_quantize,
+        modules_not_to_freeze,
+        do_not_quantize,
     )
     assert n_adapt_layers == {"fc1"}
     assert quantized_modules == {"fc1"}
@@ -404,7 +443,7 @@ def test_new_finetuned_default():
     In this setting, all modules are quantized, except the lm_head.
     """
     net = _TestNet()
-    ft.quantize_base_model(net)
+    ft.prepare_base_model(net)
     nf1 = ft.new_finetuned(net)
 
     assert nf1 is not None
@@ -453,7 +492,7 @@ def test_new_finetuned_default():
 #         for p in c.parameters():
 #             assert p.requires_grad == True
 #
-#     ft.quantize_base_model(net)
+#     ft.prepare_base_model(net)
 #
 #     # for c in net.children():
 #     #     assert isinstance(c, ft.QuantizedLinear)

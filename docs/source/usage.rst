@@ -21,6 +21,11 @@ The procedure for using this library involves:
 1. Loading a Pre-Trained Language Model
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+All we require at this point is a ``nn.Module`` that we can use in subsequent
+steps. While finetuna is intended for use with language models, this doesn't
+preclude it's use with other types of mdoels since it can adapt any model's
+``nn.Linear`` or ``nn.Embedding`` layers.
+
 This follows the standard procedure for loading models from e.g. HuggingFace.
 
 .. code-block:: python
@@ -79,16 +84,16 @@ This is an optional step and will be done automatically when creating new
 finetuned models in the next step if ``base_model`` is not yet quantized.
 
 If however you have memory constraints that mean that you can't keep a full
-model loaded into memory, then use ``quantize_base_model(base_model)`` to
+model loaded into memory, then use ``prepare_base_model(base_model)`` to
 convert all the ``nn.Linear`` and ``nn.Embedding`` layers to 8bit:
 
 .. code-block:: python
 
-   ft.quantize_base_model(base_model)
+   ft.prepare_base_model(base_model)
 
 .. note::
 
-    The ``quantize_base_model`` function will modify the ``base_model``
+    The ``prepare_base_model`` function will modify the ``base_model``
     in-place, although it returns a reference to it for convenience.
 
 This function also accepts an additional ``modules_not_to_freeze`` argument:
@@ -98,13 +103,13 @@ this set. By default, this is set to ``lm_head`` (a module name shared by
 precision for the language model head.
 
 If you *do* want to quantize the language modelling head, you can set this to
-teh empty set:
+the empty set:
 
 .. code-block:: python
 
-   ft.quantize_base_model(base_model, modules_not_to_quantize=set())
+   ft.prepare_base_model(base_model, modules_not_to_quantize=set())
 
-Also note that if you quantize a module in the ``quantize_base_model`` function,
+Also note that if you quantize a module in the ``prepare_base_model`` function,
 subsequently requiring that this module is no longer quantized when calling
 ``new_finetuned`` will result in an error. Later versions of ``finetuna``
 may support this, but the loss of accuracy owing to the round-trip from
@@ -263,7 +268,7 @@ adapting a non-quantized layer.
 Note that for now it is an error to:
 
 1. place a module in ``modules_not_to_quantize`` if it has previously been
-   quantized in the base model during a call to ``quantize_base_model``.
+   quantized in the base model during a call to ``prepare_base_model``.
 2. place a module in ``modules_not_to_freeze`` if it is quantized (directly
    optimising int8 weights is possible, and will be supported in the future)
 
