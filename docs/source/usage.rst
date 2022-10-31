@@ -22,11 +22,12 @@ The procedure for using this library involves:
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 All we require at this point is a ``nn.Module`` that we can use in subsequent
-steps. While finetuna is intended for use with language models, this doesn't
-preclude it's use with other types of mdoels since it can adapt any model's
-``nn.Linear`` or ``nn.Embedding`` layers.
+steps. While we initially wrote finetuna for use with large language models,
+this doesn't mean you can't aply it to other types of models, since it can adapt
+any ``nn.Linear`` or ``nn.Embedding`` layers.
 
-This follows the standard procedure for loading models from e.g. HuggingFace.
+For loading a language model, we can follow the standard procedure from e.g.
+HuggingFace:
 
 .. code-block:: python
 
@@ -35,9 +36,11 @@ This follows the standard procedure for loading models from e.g. HuggingFace.
    model_name = 'facebook/opt-1.3b'
    base_model = transformers.AutoModelForCausalLM.from_pretrained(model_name)
 
-However, if you face memory issues, you can install `HF accelerate
-<https://github.com/huggingface/accelerate>`_ (``pip install accelerate``) to
-use ``low_cpu_mem_usage=True`` and also load the memory in ``float16``:
+If you face memory issues loading the model with the method above, you can use
+the `HF accelerate <https://github.com/huggingface/accelerate>`_ library
+(install with ``pip install accelerate``) which will give you a
+``low_cpu_mem_usage=True`` flag. You can also load the model in ``float16`` to
+further reduce memory usage:
 
 .. code-block:: python
 
@@ -48,40 +51,47 @@ use ``low_cpu_mem_usage=True`` and also load the memory in ``float16``:
        use_cache=False,
    )
 
-Please don't load the model with HuggingFace's recent ``load_in_8bit=True`` as
-this will interfere with ``finetuna``. Of course if you are only interested in
-quantization, then you should just use this feature and not use ``finetuna``!
+.. note::
+    Please don't load the model with HuggingFace's recent ``load_in_8bit=True`` as
+    this will interfere with ``finetuna``. Of course if you are only interested in
+    quantization, then you should just use this feature and not use ``finetuna``!
 
 2. Viewing Adaptable Modules
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``finetuna`` fine-tunes pre-trained models by freezing the pre-trained weights
-(quantized or not) in each network module, and adding low-rank adapters on top
-of these modules.
+``finetuna`` works by freezing the pretrained model weights (whether quantized
+or not) in each neural network module, and adding small perturbations to the
+frozen pretrained model weights via low rank *adapters*.
 
-By default, the library will add adapters to *all* the layers, but this can be
-unnecessary and you can save a lot of memory and computation by scrupulously
-selecting the modules you add adapters to.
+We only support adding adapters to ``nn.Linear`` and ``nn.Embedding`` network
+modules for now.
 
-To get a list of your model's modules that you can add adapters to, first
-quantize the model, then use the ``get_lora_adaptable_modules`` helper function:
+By default, the library will add these adapters to *all* possible layers, but
+this can be unnecessary and you can save a lot of memory and computation by
+scrupulously selecting the modules you add adapters to.
+
+To get a list of your model's adaptable modules, first prepare the pretrained
+model by calling ``prepare_base_model``, and then use the
+``get_lora_adaptable_modules`` helper function:
 
 .. code-block:: python
 
    import finetuna as ft
 
-   ft.prepare_base_model(base_model)
+   ft.prepare_base_model(base_model)  # modifies base_model in-place
    print(ft.get_lora_adaptable_modules(base_model))
 
 3. Quantizing the Model
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-Quantizing the model refers to turning all (or a subset of) the frozen
-pretrained model weights to int8 using the quantization scheme described in
-`LLM.int8() <https://arxiv.org/pdf/2208.07339.pdf>`_.
+Quantizing the model refers to turning all (or a subset of) the pretrained model
+weights to 8-bit integers (``int8``). Note that in this library, quantizing a
+network module also implies that you are freezing it.
+
+.. using the quantization scheme described in `LLM.int8() <https://arxiv.org/pdf/2208.07339.pdf>`_.
 
 This is an optional step and will be done automatically when creating new
-finetuned models in the next step if ``base_model`` is not yet quantized.
+finetuned models in step 4 if ``base_model`` is not yet quantized.
 
 If however you have memory constraints that mean that you can't keep a full
 model loaded into memory, then use ``prepare_base_model(base_model)`` to
@@ -96,11 +106,12 @@ convert all the ``nn.Linear`` and ``nn.Embedding`` layers to 8bit:
     The ``prepare_base_model`` function will modify the ``base_model``
     in-place, although it returns a reference to it for convenience.
 
-This function also accepts an additional ``modules_not_to_freeze`` argument:
-this does what it says on the tin, and doesn't quantize the modules listed in
-this set. By default, this is set to ``lm_head`` (a module name shared by
-``GPT-`` and ``OPT-`` models in HuggingFace), since we often want to retain full
-precision for the language model head.
+This function also accepts an additional ``modules_not_to_quantize`` argument
+which does what it says on the tin: it doesn't freeze (or quantize) the
+modules specified in this set, leaving them untouched by finetuna. By default,
+this is set to ``lm_head`` (a module name shared by ``GPT-`` and ``OPT-`` models
+in HuggingFace), since we often want to retain full precision for the language
+model head.
 
 If you *do* want to quantize the language modelling head, you can set this to
 the empty set:
