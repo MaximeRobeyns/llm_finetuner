@@ -1,7 +1,7 @@
 .PHONY: install test alltest docs
 
 install:  ## Install the project (assuming cuda 11.3)
-	pip3 install -e .[all] --extra-index-url https://download.pytorch.org/whl/cu113
+	pip3 install -e .[all]
 
 test:  ## Run the unit tests
 	python -m pytest

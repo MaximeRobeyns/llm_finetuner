@@ -13,7 +13,8 @@ This repository provides wrappers around LLMs for
 
 ## Install
 
-**Prerequisite**: PyTorch with CUDA support (11.3 recommended, but will work with other versions).
+**Prerequisite**: PyTorch with CUDA support (11.3 recommended, but will work
+with other versions up to 11.7). If using conda, use `conda install -c conda-forge cudatoolkit=11.7`.
 
 Install with
 
